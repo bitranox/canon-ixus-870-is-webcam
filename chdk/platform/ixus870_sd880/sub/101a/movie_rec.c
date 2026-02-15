@@ -296,9 +296,17 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "LDR     R3, [SP,#0x34]\n"
                  "MOV     R2, R8\n"
                  "BL      sub_FF8EDBE0\n"
+                 // WEBCAM FIX: Force AVI write result to success.
+                 // sub_FF8EDBE0 writes an error code to [SP+0x38].
+                 // When recording via USB/PTP, the write may fail,
+                 // triggering a stop. Zero it to prevent that.
+                 "MOV     R0, #0\n"
+                 "STR     R0, [SP, #0x38]\n"
                  "LDR     R0, [R6,#0x14]\n"
                  "MOV     R1, #0x3E8\n"
                  "BL      sub_FF8274B4\n"
+                 // WEBCAM FIX: Force TakeSemaphore success (not timeout=9)
+                 "MOV     R0, #0\n"
                  "CMP     R0, #9\n"
                  "BNE     loc_FF85DBB4\n"
  "loc_FF85DBA4:\n"
@@ -342,9 +350,14 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "MOV     R3, LR\n"
                  "MOV     R2, R8\n"
                  "BL      sub_FF8EDBE0\n"
+                 // WEBCAM FIX: Force second AVI write result to success
+                 "MOV     R0, #0\n"
+                 "STR     R0, [SP, #0x38]\n"
                  "LDR     R0, [R6,#0x14]\n"
                  "MOV     R1, #0x3E8\n"
                  "BL      sub_FF8274B4\n"
+                 // WEBCAM FIX: Force second TakeSemaphore success
+                 "MOV     R0, #0\n"
                  "CMP     R0, #9\n"
                  "BNE     loc_FF85DC64\n"
                  "BL      sub_FF930358\n"

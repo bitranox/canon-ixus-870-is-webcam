@@ -1129,15 +1129,21 @@ Added `tje_encode_uyvy()` to the TJE encoder to handle the UYVY (YUV422) format 
 | GiveSemaphore keepalive (100 pre-signals) | Inconsistent: 20+ frames in one session, ~1s in others |
 | GiveSemaphore keepalive (10 pre-signals) | Recording dies immediately (not enough runway) |
 | Re-enable `hw_mjpeg_start()` before recording | Recording dies after ~1s (conflicts with pipeline JPCORE setup) |
+| Force AVI write success (MOV R0,#0 + STR R0,[SP,#0x38] in movie_rec.c) | Camera still shuts off after ~1s — other stop conditions exist |
+| Force TakeSemaphore success (MOV R0,#0 before CMP R0,#9) | Combined with above, still dies — not the only stop path |
+| `kbd_key_press(KEY_VIDEO)` instead of UIFS_StartMovieRecord | **Recording never starts** (movie_status=0). IXUS 870 has no physical VIDEO button — KEY_VIDEO is NOT in the platform keymap, so kbd_key_press silently does nothing |
+
+**Why `kbd_key_press(KEY_VIDEO)` fails on IXUS 870 IS**: The camera has no physical VIDEO button. The platform keymap in `chdk/platform/ixus870_sd880/kbd.c` only defines GROUP 2 keys (SHOOT, arrows, SET, ZOOM, MENU, DISPLAY, PRINT). `kbd_key_press()` iterates the keymap looking for KEY_VIDEO (18), finds no match, and returns without action. For cameras without a physical VIDEO button, CHDK uses `PostLogicalEventToUI(levent_id_for_name("PressMovieButton"), 0)` — this is enabled by the `KBD_SIMULATE_VIDEO_KEY` macro. **Next step**: Try `PostLogicalEventToUI` to start recording, or switch back to `UIFS_StartMovieRecord` and focus on fixing the recording stop path in `movie_rec.c`.
 
 **Important operational notes**:
 - **SD card space**: Recording writes real MOV files to the SD card. Each recording session creates a ~1 GB MOV file. Delete old MOV files from `DCIM/100CANON/` regularly to prevent SD card full errors.
-- **`hw_mjpeg_start()` must NOT be called before `UIFS_StartMovieRecord`**: It conflicts with the recording pipeline's own JPCORE setup and causes frames to stop after 1-2 seconds. The committed version correctly skips it.
+- **`hw_mjpeg_start()` must NOT be called before recording**: It conflicts with the recording pipeline's own JPCORE setup and causes frames to stop after 1-2 seconds. The committed version correctly skips it.
 - **Semaphore handle validation**: The handle at `[0x51A8+0x14]` must be validated (not 0, not 0xFFFFFFFF, within RAM range) before calling GiveSemaphore, or the camera crashes.
+- **movie_rec.c patches**: Two pairs of AVI write success forcing patches are added (after `BL sub_FF8EDBE0` and `BL sub_FF8274B4`) to prevent write failures and semaphore timeouts from stopping the pipeline. Not yet tested with a working recording start method.
 
 **Files involved**:
-- `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — spy buffer hooks in `sub_FF85D98C_my` (inline ASM)
-- `chdk/modules/webcam.c` — `capture_frame_h264()`, recording start/stop via `UIFS_StartMovieRecord`
+- `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — spy buffer hooks in `sub_FF85D98C_my` (inline ASM), AVI write success patches
+- `chdk/modules/webcam.c` — `capture_frame_h264()`, recording start/stop
 - `bridge/src/webcam/h264_decoder.cpp` — FFmpeg AVCC-to-Annex-B converter + decoder
 - `bridge/src/webcam/h264_decoder.h` — H.264 decoder header
 
