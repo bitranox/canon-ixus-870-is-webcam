@@ -247,15 +247,16 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "LDMIB   R4, {R0,R1}\n"
                  "LDR     R3, =0x1ABE0\n"
                  "MOV     R2, R10\n"
-                 "BL      sub_FF8EDBE0\n"
-                 "LDR     R0, [R6,#0x14]\n"
-                 "MOV     R1, #0x3E8\n"
-                 "BL      sub_FF8274B4\n"
-                 "CMP     R0, #9\n"
-                 "BEQ     loc_FF85DBA4\n"
-                 "LDR     R0, [SP,#0x38]\n"
-                 "CMP     R0, #0\n"
-                 "BNE     loc_FF85DBC0\n"
+                 // ====== WEBCAM PATCH: skip AVI write + semaphore (site 1) ======
+                 "MOV     R0, R0\n"             // NOP (was: BL sub_FF8EDBE0)
+                 "MOV     R0, #0\n"             // force result = 0
+                 "STR     R0, [SP,#0x38]\n"     // force write result = success
+                 "MOV     R0, R0\n"             // NOP (was: BL sub_FF8274B4 TakeSemaphore)
+                 "MOV     R0, R0\n"             // NOP (was: CMP R0, #9)
+                 "MOV     R0, R0\n"             // NOP (was: BEQ loc_FF85DBA4)
+                 "LDR     R0, [SP,#0x38]\n"     // = 0 (forced above)
+                 "CMP     R0, #0\n"             // always equal
+                 "BNE     loc_FF85DBC0\n"        // never taken
                  "MOV     R0, #1\n"
                  "BL      sub_FF8EDC88\n"
                  "BL      sub_FF8EDCC4\n"
@@ -295,20 +296,13 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "LDMIB   R4, {R0,R1}\n"
                  "LDR     R3, [SP,#0x34]\n"
                  "MOV     R2, R8\n"
-                 "BL      sub_FF8EDBE0\n"
-                 // WEBCAM FIX: Force AVI write result to success.
-                 // sub_FF8EDBE0 writes an error code to [SP+0x38].
-                 // When recording via USB/PTP, the write may fail,
-                 // triggering a stop. Zero it to prevent that.
-                 "MOV     R0, #0\n"
-                 "STR     R0, [SP, #0x38]\n"
-                 "LDR     R0, [R6,#0x14]\n"
-                 "MOV     R1, #0x3E8\n"
-                 "BL      sub_FF8274B4\n"
-                 // WEBCAM FIX: Force TakeSemaphore success (not timeout=9)
-                 "MOV     R0, #0\n"
-                 "CMP     R0, #9\n"
-                 "BNE     loc_FF85DBB4\n"
+                 // ====== WEBCAM PATCH: skip AVI write + semaphore (site 2) ======
+                 "MOV     R0, R0\n"             // NOP (was: BL sub_FF8EDBE0)
+                 "MOV     R0, #0\n"             // force result = 0
+                 "STR     R0, [SP,#0x38]\n"     // force write result = success
+                 "MOV     R0, R0\n"             // NOP (was: BL sub_FF8274B4 TakeSemaphore)
+                 "MOV     R0, R0\n"             // NOP (was: CMP R0, #9)
+                 "B       loc_FF85DBB4\n"        // always success (was: BNE)
  "loc_FF85DBA4:\n"
                  "BL      sub_FF930358\n"
                  "MOV     R0, #0x90000\n"
@@ -349,17 +343,13 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "LDMIB   R4, {R0,R1}\n"
                  "MOV     R3, LR\n"
                  "MOV     R2, R8\n"
-                 "BL      sub_FF8EDBE0\n"
-                 // WEBCAM FIX: Force second AVI write result to success
-                 "MOV     R0, #0\n"
-                 "STR     R0, [SP, #0x38]\n"
-                 "LDR     R0, [R6,#0x14]\n"
-                 "MOV     R1, #0x3E8\n"
-                 "BL      sub_FF8274B4\n"
-                 // WEBCAM FIX: Force second TakeSemaphore success
-                 "MOV     R0, #0\n"
-                 "CMP     R0, #9\n"
-                 "BNE     loc_FF85DC64\n"
+                 // ====== WEBCAM PATCH: skip AVI write + semaphore (site 3) ======
+                 "MOV     R0, R0\n"             // NOP (was: BL sub_FF8EDBE0)
+                 "MOV     R0, #0\n"             // force result = 0
+                 "STR     R0, [SP,#0x38]\n"     // force write result = success
+                 "MOV     R0, R0\n"             // NOP (was: BL sub_FF8274B4 TakeSemaphore)
+                 "MOV     R0, R0\n"             // NOP (was: CMP R0, #9)
+                 "B       loc_FF85DC64\n"        // always success (was: BNE)
                  "BL      sub_FF930358\n"
                  "MOV     R0, #0x90000\n"
                  "STR     R5, [R6,#0x3C]\n"

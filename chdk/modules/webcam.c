@@ -1532,101 +1532,124 @@ static int webcam_start(int jpeg_quality)
     // conflicts with the recording pipeline's own JPCORE setup and causes
     // the spy buffer to stop updating after 1-2 frames.
 
-    // Start video recording by simulating the record button press.
-    // This goes through the camera's normal input processing pipeline,
-    // which handles all recording setup correctly (ring buffer, AVI writer,
-    // JPCORE, etc.). Using UIFS_StartMovieRecord directly caused the
-    // recording pipeline to die after ~1 second.
+    // Start video recording via the firmware's CtrlSrv event system to
+    // activate the full movie_record_task pipeline. This triggers
+    // sub_FF85D98C_my which calls sub_FF92FE8C to get encoded frames
+    // and writes them to the spy buffer at 0xFF000.
+    //
+    // UIFS_StartMovieRecord_FW posts event 0x9A1 to the control server
+    // queue. The actual pipeline init happens asynchronously.
     {
-        int rec_retries;
-
-        // Simulate pressing the video record button
-        kbd_key_press(KEY_VIDEO);
-        msleep(100);
-        kbd_key_release(KEY_VIDEO);
-
-        // Store diagnostics
         {
-            volatile unsigned int *spy = WEBCAM_SPY_ADDR;
-            spy[11] = 0;                     // no return code for button press
-            spy[12] = get_movie_status();    // movie_status right after press
-        }
+            int rec_retries;
+            unsigned int rec_args[1] = { 0 };  // NULL callback = use default
+            unsigned int rec_ret;
 
-        // Wait for recording to start (movie_status == 4)
-        for (rec_retries = 0; rec_retries < 50; rec_retries++) {
-            msleep(100);
-            if (get_movie_status() == VIDEO_RECORD_IN_PROGRESS) {
-                recording_active = 1;
-                break;
-            }
-        }
+            rec_ret = call_func_ptr(FW_UIFS_StartMovieRecord, rec_args, 1);
 
-        // Let first few frames settle before capturing
-        if (recording_active) {
-            msleep(200);
-
-            // AVI WRITE SEMAPHORE KEEPALIVE
-            // The recording pipeline calls TakeSemaphore with 1s timeout
-            // after each AVI frame write. Pre-signal with GiveSemaphore
-            // to prevent timeout from killing the pipeline.
-            {
-                volatile unsigned int *movtask = (volatile unsigned int *)0x000051A8;
-                unsigned int raw_handle = movtask[0x14/4];
-                if (raw_handle != 0 && raw_handle != 0xFFFFFFFF && raw_handle < 0x10000000) {
-                    avi_sem_handle = raw_handle;
-                } else {
-                    avi_sem_handle = 0;
-                }
-            }
+            // Store return value in spy buffer for diagnostics
             {
                 volatile unsigned int *spy = WEBCAM_SPY_ADDR;
-                spy[15] = avi_sem_handle;
+                spy[11] = rec_ret;           // UIFS_StartMovieRecord return
+                spy[12] = get_movie_status(); // movie_status right after call
             }
-            if (avi_sem_handle != 0) {
-                int s;
-                for (s = 0; s < 100; s++) {
-                    unsigned int sem_args[1] = { avi_sem_handle };
-                    call_func_ptr(FW_GiveSemaphore, sem_args, 1);
+
+            if (rec_ret == 0) {
+                // Event posted successfully — wait for CtrlSrv to process
+                for (rec_retries = 0; rec_retries < 50; rec_retries++) {
+                    msleep(100);
+                    if (get_movie_status() == VIDEO_RECORD_IN_PROGRESS) {
+                        recording_active = 1;
+                        break;
+                    }
+                }
+
+                // Let first few frames settle before capturing
+                if (recording_active) {
+                    msleep(200);
+
+                    // ============================================================
+                    // AVI WRITE SEMAPHORE KEEPALIVE
+                    //
+                    // The recording pipeline (sub_FF85D98C_my) calls sub_FF8EDBE0
+                    // to write each H.264 frame to a MOV file, then waits on a
+                    // semaphore (TakeSemaphore, 1s timeout) for write completion.
+                    // In PTP/USB mode the file I/O may stall or fail, causing the
+                    // semaphore to timeout and the pipeline to stop after 2 frames.
+                    //
+                    // Fix: Pre-signal the semaphore with GiveSemaphore so that
+                    // TakeSemaphore returns immediately. The initial burst of 100
+                    // signals provides ~3 seconds of runway at 30fps. After that,
+                    // capture_frame_h264() signals once per PTP request (~33ms),
+                    // keeping the pipeline alive indefinitely.
+                    // ============================================================
+                    {
+                        volatile unsigned int *movtask = (volatile unsigned int *)0x000051A8;
+                        unsigned int raw_handle = movtask[0x14/4];  // semaphore at offset 0x14
+                        // Validate: must be in RAM range and not 0xFFFFFFFF.
+                        // DryOS semaphore handles are small integers or RAM pointers.
+                        // Garbage values (0xFFFFFFFF) would crash GiveSemaphore.
+                        if (raw_handle != 0 && raw_handle != 0xFFFFFFFF && raw_handle < 0x10000000) {
+                            avi_sem_handle = raw_handle;
+                        } else {
+                            avi_sem_handle = 0;
+                        }
+                    }
+                    // Write handle to spy buffer for diagnostics
+                    {
+                        volatile unsigned int *spy = WEBCAM_SPY_ADDR;
+                        spy[15] = avi_sem_handle;
+                    }
+                    if (avi_sem_handle != 0) {
+                        int s;
+                        for (s = 0; s < 100; s++) {
+                            unsigned int sem_args[1] = { avi_sem_handle };
+                            call_func_ptr(FW_GiveSemaphore, sem_args, 1);
+                        }
+                    }
+                }
+
+                // Store final movie_status for diagnostics
+                {
+                    volatile unsigned int *spy = WEBCAM_SPY_ADDR;
+                    spy[13] = get_movie_status();
+                    spy[14] = (unsigned int)rec_retries;
+                    spy[15] = 0;
                 }
             }
-        }
 
-        // Store final movie_status for diagnostics
-        {
-            volatile unsigned int *spy = WEBCAM_SPY_ADDR;
-            spy[13] = get_movie_status();
-            spy[14] = (unsigned int)rec_retries;
-        }
-
-        // Append recording start results to hw_diag buffer
-        {
-            #define DIAG_U32_REC(off, v) do { \
-                hw_diag[(off)]   = (v);       hw_diag[(off)+1] = (v)>>8; \
-                hw_diag[(off)+2] = (v)>>16;   hw_diag[(off)+3] = (v)>>24; \
-            } while(0)
-
-            DIAG_U32_REC(256, 0xD0D0D0D0);         // marker
-            DIAG_U32_REC(260, 0);                    // button press (no return code)
-            DIAG_U32_REC(264, get_movie_status());
-            DIAG_U32_REC(268, recording_active);
-            DIAG_U32_REC(272, *(volatile unsigned int *)0x000051E4);
+            // Append recording start results to hw_diag buffer
+            // (offsets 256-287 — after hw_mjpeg_start diagnostics)
             {
-                unsigned int dat_ptr = *(volatile unsigned int *)0xFF8834F0;
-                if (dat_ptr >= 0x00001000 && dat_ptr < 0x04000000) {
-                    volatile unsigned int *ds = (volatile unsigned int *)dat_ptr;
-                    DIAG_U32_REC(276, ds[2]);
-                    DIAG_U32_REC(280, ds[4]);
-                } else {
-                    DIAG_U32_REC(276, dat_ptr);
-                    DIAG_U32_REC(280, 0xDEADDEAD);
+                #define DIAG_U32_REC(off, v) do { \
+                    hw_diag[(off)]   = (v);       hw_diag[(off)+1] = (v)>>8; \
+                    hw_diag[(off)+2] = (v)>>16;   hw_diag[(off)+3] = (v)>>24; \
+                } while(0)
+
+                DIAG_U32_REC(256, 0xD0D0D0D0);         // marker
+                DIAG_U32_REC(260, rec_ret);              // UIFS_StartMovieRecord return
+                DIAG_U32_REC(264, get_movie_status());   // movie_status after wait
+                DIAG_U32_REC(268, recording_active);     // did recording start?
+                DIAG_U32_REC(272, *(volatile unsigned int *)0x000051E4); // raw movie_status
+                {
+                    // Check precondition state at DAT_ff8834f0
+                    unsigned int dat_ptr = *(volatile unsigned int *)0xFF8834F0;
+                    if (dat_ptr >= 0x00001000 && dat_ptr < 0x04000000) {
+                        volatile unsigned int *ds = (volatile unsigned int *)dat_ptr;
+                        DIAG_U32_REC(276, ds[2]);  // +8: must be non-zero
+                        DIAG_U32_REC(280, ds[4]);  // +0x10: must be zero
+                    } else {
+                        DIAG_U32_REC(276, dat_ptr);
+                        DIAG_U32_REC(280, 0xDEADDEAD);
+                    }
                 }
+                DIAG_U32_REC(284, 0xD0D0D0D0);         // end marker
+
+                #undef DIAG_U32_REC
             }
-            DIAG_U32_REC(284, 0xD0D0D0D0);
 
-            #undef DIAG_U32_REC
+            hw_diag_len = HW_DIAG_SIZE;
         }
-
-        hw_diag_len = HW_DIAG_SIZE;
     }
 
     // Allocate JPEG double-buffers (needed for software fallback path
@@ -1671,13 +1694,10 @@ static int webcam_stop(void)
     // Re-enable auto-power-off (disabled in webcam_start)
     enable_shutdown();
 
-    // Stop recording if we started it
+    // Stop recording if we started it (Option D)
     if (recording_active) {
         int stop_retries;
-        // Simulate pressing the video button again to stop recording
-        kbd_key_press(KEY_VIDEO);
-        msleep(100);
-        kbd_key_release(KEY_VIDEO);
+        call_func_ptr(FW_UIFS_StopMovieRecord, 0, 0);
 
         for (stop_retries = 0; stop_retries < 50; stop_retries++) {
             msleep(100);

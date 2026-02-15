@@ -1,5 +1,11 @@
 # Canon IXUS 870 IS Firmware Upgrade
 
+## Development Rules (MUST follow)
+
+- **After every bridge test**: ALWAYS ask the user for feedback on the current camera/bridge behavior before doing anything else. Do NOT assume what happened — the user can see the camera physically. Wait for their response, then document findings and commit with a meaningful message.
+- **Run bridge with `--no-preview --no-webcam`** during firmware development (no virtual webcam needed).
+- **Commit after each bridge test** with a message that describes what was tested and what the result was.
+
 ## Project Overview
 
 This project contains resources and instructions for upgrading the firmware on the Canon IXUS 870 IS.
@@ -1116,30 +1122,35 @@ Added `tje_encode_uyvy()` to the TJE encoder to handle the UYVY (YUV422) format 
 
 **Root cause**: The AVI file write path in `sub_FF85D98C_my` — each frame involves `sub_FF8EDBE0` (AVI write) + semaphore wait (TakeSemaphore at `[0x51A8+0x14]` with 1s timeout). If the write fails or times out, the recording task state is set to 1 (stopping).
 
-**Partial fix — GiveSemaphore keepalive**: Pre-signaling the AVI write semaphore with `GiveSemaphore(handle)` prevents TakeSemaphore from timing out. In one session this extended recording to 20+ frames (5 decoded at 2.3 FPS). However, results are inconsistent — subsequent tests show recording dying after ~1 second despite the keepalive. Possible causes: semaphore handle validation (handle at `[0x51A8+0x14]` may be garbage), SD card full (1.2 GB MOV from prior runs filled the 1.9 GB card), or `hw_mjpeg_start()` conflicting with the recording pipeline.
+**Current fix — NOP AVI write + TakeSemaphore (2026-02-15)**: All 3 `sub_FF8EDBE0` (AVI write) calls in `sub_FF85D98C_my` are replaced with `MOV R0, R0` (NOP). All 3 `sub_FF8274B4` (TakeSemaphore with 1s timeout) calls are also NOPped. At each site, `SP+0x38` is forced to 0 (write result = success) so the pipeline's success path always runs. This differs from the earlier "force success" approach which still called the functions — the NOP approach eliminates both the blocking I/O and the blocking semaphore wait entirely. The pipeline keeps producing frames through `sub_FF92FE8C` (captured by spy buffer) without writing anything to the MOV file. Side benefit: SD card doesn't fill up with MOV files. **Status: NOT YET TESTED.**
+
+The 3 patched sites in `sub_FF85D98C_my`:
+- **Site 1** (first-frame AVI write): followed by `sub_FF8EDC88` + `sub_FF8EDCC4` + state=5 (kept as-is)
+- **Site 2** (normal frame AVI write): unconditional branch to success path `loc_FF85DBB4`
+- **Site 3** (continuation frame AVI write): unconditional branch to success path `loc_FF85DC64`
+
+**GiveSemaphore keepalive (still active but no longer critical)**: webcam.c still pre-signals the AVI write semaphore 100 times on recording start. With the NOP patches, TakeSemaphore is never called, so this keepalive is no longer needed but harmless.
 
 **Failed approaches to keep recording alive**:
 
 | Approach | Result |
 |----------|--------|
-| Skip AVI write entirely (`B loc_FF85DCBC` after spy write) | Camera shuts off — skipped critical register/state setup |
-| Zero JPEG size to skip AVI write naturally (`STR #0, [SP, #0x30]`) | Camera shuts off — same issue, critical state not maintained |
 | Spy wait loop (200ms msleep in capture_frame_h264) | Only 2 frames, then camera stops responding |
 | Increased bridge polling interval (33ms sleep) | 5 frames, still stops |
 | GiveSemaphore keepalive (100 pre-signals) | Inconsistent: 20+ frames in one session, ~1s in others |
 | GiveSemaphore keepalive (10 pre-signals) | Recording dies immediately (not enough runway) |
 | Re-enable `hw_mjpeg_start()` before recording | Recording dies after ~1s (conflicts with pipeline JPCORE setup) |
-| Force AVI write success (MOV R0,#0 + STR R0,[SP,#0x38] in movie_rec.c) | Camera still shuts off after ~1s — other stop conditions exist |
-| Force TakeSemaphore success (MOV R0,#0 before CMP R0,#9) | Combined with above, still dies — not the only stop path |
-| `kbd_key_press(KEY_VIDEO)` instead of UIFS_StartMovieRecord | **Recording never starts** (movie_status=0). IXUS 870 has no physical VIDEO button — KEY_VIDEO is NOT in the platform keymap, so kbd_key_press silently does nothing |
-
-**Why `kbd_key_press(KEY_VIDEO)` fails on IXUS 870 IS**: The camera has no physical VIDEO button. The platform keymap in `chdk/platform/ixus870_sd880/kbd.c` only defines GROUP 2 keys (SHOOT, arrows, SET, ZOOM, MENU, DISPLAY, PRINT). `kbd_key_press()` iterates the keymap looking for KEY_VIDEO (18), finds no match, and returns without action. For cameras without a physical VIDEO button, CHDK uses `PostLogicalEventToUI(levent_id_for_name("PressMovieButton"), 0)` — this is enabled by the `KBD_SIMULATE_VIDEO_KEY` macro. **Next step**: Try `PostLogicalEventToUI` to start recording, or switch back to `UIFS_StartMovieRecord` and focus on fixing the recording stop path in `movie_rec.c`.
+| Force AVI write success (call sub_FF8EDBE0 then MOV R0,#0 + STR R0,[SP,#0x38]) | Camera still shuts off — sub_FF8EDBE0 itself may block/stall |
+| Force TakeSemaphore success (call sub_FF8274B4 then MOV R0,#0 before CMP R0,#9) | Combined with above, still dies — blocking I/O not eliminated |
+| `kbd_key_press(KEY_VIDEO)` instead of UIFS_StartMovieRecord | **Recording never starts** (movie_status=0). IXUS 870 has no physical VIDEO button — KEY_VIDEO (18) is NOT in the platform keymap |
+| `PostLogicalEventToUI("PressMovieButton")` | Returns valid event ID 0x9A6 but is **ignored in PTP/USB mode** — movie_status stays 0 |
+| Skip AVI write entirely (`B loc_FF85DCBC` after spy write) | Camera shuts off — skipped critical register/state setup |
+| Zero JPEG size to skip AVI write naturally (`STR #0, [SP, #0x30]`) | Camera shuts off — same issue, critical state not maintained |
 
 **Important operational notes**:
-- **SD card space**: Recording writes real MOV files to the SD card. Each recording session creates a ~1 GB MOV file. Delete old MOV files from `DCIM/100CANON/` regularly to prevent SD card full errors.
 - **`hw_mjpeg_start()` must NOT be called before recording**: It conflicts with the recording pipeline's own JPCORE setup and causes frames to stop after 1-2 seconds. The committed version correctly skips it.
 - **Semaphore handle validation**: The handle at `[0x51A8+0x14]` must be validated (not 0, not 0xFFFFFFFF, within RAM range) before calling GiveSemaphore, or the camera crashes.
-- **movie_rec.c patches**: Two pairs of AVI write success forcing patches are added (after `BL sub_FF8EDBE0` and `BL sub_FF8274B4`) to prevent write failures and semaphore timeouts from stopping the pipeline. Not yet tested with a working recording start method.
+- **movie_rec.c NOP patches**: All 3 `BL sub_FF8EDBE0` and all 3 `BL sub_FF8274B4` are NOPped with `MOV R0, R0`. `SP+0x38` forced to 0. AVI bookkeeping functions (`sub_FF8EDC88`, `sub_FF8EDCC4`) still run to maintain pipeline state.
 
 **Files involved**:
 - `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — spy buffer hooks in `sub_FF85D98C_my` (inline ASM), AVI write success patches
