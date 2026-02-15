@@ -97,6 +97,15 @@
 // quality=0xe is what the firmware uses during actual video recording.
 #define FW_JPCORE_SetQuality                ((void *)0xFF849408)
 
+// DryOS semaphore function for keeping the recording pipeline alive.
+// The AVI write path in sub_FF85D98C_my calls TakeSemaphore with a
+// 1-second timeout after each sub_FF8EDBE0 (AVI frame write) call.
+// If the write never completes (e.g., file system blocked in PTP mode),
+// the timeout triggers and sets the recording state to "stopping".
+// By pre-signaling with GiveSemaphore, TakeSemaphore returns immediately
+// and the recording pipeline continues producing H.264 frames.
+#define FW_GiveSemaphore                    ((void *)0xFF827584)
+
 // JPCORE power struct at RAM 0x8028 (from ROM literal DAT_ff8eec70)
 // Offset 0x00: init flag (must be !=0 for FUN_ff8eeb6c to proceed)
 // Offset 0x04: semaphore handle
@@ -133,6 +142,7 @@ static unsigned int last_cb_count_raw = 0;  // rec_cb_count at last raw capture 
 static int recording_active = 0;           // 1 if we started video recording for H.264 capture
 static int webcam_stop(void);              // forward declaration for use in webcam_start
 static unsigned int last_spy_cnt = 0;      // spy[3] frame count at last H.264 capture (stale detection)
+static unsigned int avi_sem_handle = 0;    // AVI write semaphore handle (from movtask[+0x14])
 
 // Note: SPS/PPS for H.264 decoding is hardcoded in the PC bridge's FFmpeg
 // decoder (extracted from the camera's MOV avcC atom). The spy buffer never
@@ -1269,6 +1279,17 @@ static int capture_frame_h264(void)
 
     if (!recording_active) return 0;
 
+    // Keep the recording pipeline alive by signaling the AVI write
+    // completion semaphore. sub_FF85D98C_my calls TakeSemaphore with
+    // a 1-second timeout after each AVI frame write. If the write
+    // never completes (PTP mode blocks file I/O), the timeout kills
+    // the recording. Our GiveSemaphore makes TakeSemaphore return
+    // immediately, preventing the timeout.
+    if (avi_sem_handle != 0) {
+        unsigned int sem_args[1] = { avi_sem_handle };
+        call_func_ptr(FW_GiveSemaphore, sem_args, 1);
+    }
+
     spy_magic = spy[0];
     spy_ptr = spy[1];
     spy_size = spy[2];
@@ -1339,8 +1360,9 @@ static int capture_frame_h264(void)
 
             if (have_vcl && total > 0 && total <= spy_size) {
                 actual_size = total;
+            } else {
+                return 0;  // Reject frame — AVCC parser couldn't determine size
             }
-            // else: actual_size stays at spy_size (parser couldn't determine size)
         }
 
         // Allocate copy buffer if needed
@@ -1495,6 +1517,7 @@ static int webcam_start(int jpeg_quality)
     last_cb_count_hwjpeg = 0;
     recording_active = 0;
     last_spy_cnt = 0;
+    avi_sem_handle = 0;
 
     // Switch camera to video mode
     if (switch_to_video_mode() < 0) {
@@ -1544,6 +1567,46 @@ static int webcam_start(int jpeg_quality)
                 // Let first few frames settle before capturing
                 if (recording_active) {
                     msleep(200);
+
+                    // ============================================================
+                    // AVI WRITE SEMAPHORE KEEPALIVE
+                    //
+                    // The recording pipeline (sub_FF85D98C_my) calls sub_FF8EDBE0
+                    // to write each H.264 frame to a MOV file, then waits on a
+                    // semaphore (TakeSemaphore, 1s timeout) for write completion.
+                    // In PTP/USB mode the file I/O may stall or fail, causing the
+                    // semaphore to timeout and the pipeline to stop after 2 frames.
+                    //
+                    // Fix: Pre-signal the semaphore with GiveSemaphore so that
+                    // TakeSemaphore returns immediately. The initial burst of 100
+                    // signals provides ~3 seconds of runway at 30fps. After that,
+                    // capture_frame_h264() signals once per PTP request (~33ms),
+                    // keeping the pipeline alive indefinitely.
+                    // ============================================================
+                    {
+                        volatile unsigned int *movtask = (volatile unsigned int *)0x000051A8;
+                        unsigned int raw_handle = movtask[0x14/4];  // semaphore at offset 0x14
+                        // Validate: must be in RAM range and not 0xFFFFFFFF.
+                        // DryOS semaphore handles are small integers or RAM pointers.
+                        // Garbage values (0xFFFFFFFF) would crash GiveSemaphore.
+                        if (raw_handle != 0 && raw_handle != 0xFFFFFFFF && raw_handle < 0x10000000) {
+                            avi_sem_handle = raw_handle;
+                        } else {
+                            avi_sem_handle = 0;
+                        }
+                    }
+                    // Write handle to spy buffer for diagnostics
+                    {
+                        volatile unsigned int *spy = WEBCAM_SPY_ADDR;
+                        spy[15] = avi_sem_handle;
+                    }
+                    if (avi_sem_handle != 0) {
+                        int s;
+                        for (s = 0; s < 100; s++) {
+                            unsigned int sem_args[1] = { avi_sem_handle };
+                            call_func_ptr(FW_GiveSemaphore, sem_args, 1);
+                        }
+                    }
                 }
 
                 // Store final movie_status for diagnostics
@@ -1650,6 +1713,7 @@ static int webcam_stop(void)
     // Reset Option B/D state
     last_cb_count_hwjpeg = 0;
     last_spy_cnt = 0;
+    avi_sem_handle = 0;
 
     // Free raw UYVY buffer
     if (uyvy_buf) {

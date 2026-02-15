@@ -325,7 +325,13 @@ writing to it without mounting first will NOT write to the SD card!**
 
 ### Development Workflow
 
-**After each bridge test run, commit all modified files** with a descriptive message documenting the current approach and test results. This ensures we can always revert to a known working state when regressions happen. Include `movie_rec.c` (untracked, must be `git add`'d explicitly) in commits since it contains the spy buffer hooks.
+**Run the bridge without preview** during camera firmware development to avoid unnecessary overhead:
+```
+"C:/projects/ixus870IS/bridge/build/Release/chdk-webcam.exe" --no-preview --no-webcam
+```
+Focus on getting the camera firmware pipeline working first; add preview/webcam later.
+
+**After each bridge test run, document the findings and commit all modified files** with a descriptive message documenting the current approach and test results. This ensures we can always revert to a known working state when regressions happen. Include `movie_rec.c` (untracked, must be `git add`'d explicitly) in commits since it contains the spy buffer hooks.
 
 ## Firmware Reverse Engineering (Ghidra)
 
@@ -1106,7 +1112,11 @@ Added `tje_encode_uyvy()` to the TJE encoder to handle the UYVY (YUV422) format 
 - PC bridge receives and decodes them via FFmpeg (confirmed up to 22 consecutive frames in one session)
 - `capture_frame_h264()` reads spy buffer non-blocking (check once, return immediately)
 
-**Current problem (2026-02-15)**: The recording pipeline produces 2-8 H.264 frames, then stops. The `sub_FF85D98C_my` callback stops being called. After this, the camera stops responding to USB/PTP requests (bridge hangs on USB transfers). The root cause is unknown but suspected to be related to the AVI file write path in `sub_FF85D98C_my` — each frame involves `sub_FF8EDBE0` (AVI write) + semaphore wait (1s timeout). If this write fails or times out, the recording task state is reset.
+**Current problem (2026-02-15)**: The recording pipeline starts (movie_status=4) but stops after ~1 second. The `sub_FF85D98C_my` callback stops being called. After this, the camera stops responding to USB/PTP requests (bridge hangs on USB transfers).
+
+**Root cause**: The AVI file write path in `sub_FF85D98C_my` — each frame involves `sub_FF8EDBE0` (AVI write) + semaphore wait (TakeSemaphore at `[0x51A8+0x14]` with 1s timeout). If the write fails or times out, the recording task state is set to 1 (stopping).
+
+**Partial fix — GiveSemaphore keepalive**: Pre-signaling the AVI write semaphore with `GiveSemaphore(handle)` prevents TakeSemaphore from timing out. In one session this extended recording to 20+ frames (5 decoded at 2.3 FPS). However, results are inconsistent — subsequent tests show recording dying after ~1 second despite the keepalive. Possible causes: semaphore handle validation (handle at `[0x51A8+0x14]` may be garbage), SD card full (1.2 GB MOV from prior runs filled the 1.9 GB card), or `hw_mjpeg_start()` conflicting with the recording pipeline.
 
 **Failed approaches to keep recording alive**:
 
@@ -1116,6 +1126,14 @@ Added `tje_encode_uyvy()` to the TJE encoder to handle the UYVY (YUV422) format 
 | Zero JPEG size to skip AVI write naturally (`STR #0, [SP, #0x30]`) | Camera shuts off — same issue, critical state not maintained |
 | Spy wait loop (200ms msleep in capture_frame_h264) | Only 2 frames, then camera stops responding |
 | Increased bridge polling interval (33ms sleep) | 5 frames, still stops |
+| GiveSemaphore keepalive (100 pre-signals) | Inconsistent: 20+ frames in one session, ~1s in others |
+| GiveSemaphore keepalive (10 pre-signals) | Recording dies immediately (not enough runway) |
+| Re-enable `hw_mjpeg_start()` before recording | Recording dies after ~1s (conflicts with pipeline JPCORE setup) |
+
+**Important operational notes**:
+- **SD card space**: Recording writes real MOV files to the SD card. Each recording session creates a ~1 GB MOV file. Delete old MOV files from `DCIM/100CANON/` regularly to prevent SD card full errors.
+- **`hw_mjpeg_start()` must NOT be called before `UIFS_StartMovieRecord`**: It conflicts with the recording pipeline's own JPCORE setup and causes frames to stop after 1-2 seconds. The committed version correctly skips it.
+- **Semaphore handle validation**: The handle at `[0x51A8+0x14]` must be validated (not 0, not 0xFFFFFFFF, within RAM range) before calling GiveSemaphore, or the camera crashes.
 
 **Files involved**:
 - `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — spy buffer hooks in `sub_FF85D98C_my` (inline ASM)
