@@ -4,7 +4,7 @@
 
 - **After every bridge test**: ALWAYS ask the user for the result. Do NOT assume what happened — the user can see the camera physically. Wait for their response.
 - **Document and commit BEFORE any code changes**: After receiving test results from the user, FIRST update CLAUDE.md with the findings, THEN commit. Only AFTER the commit may you proceed with further code changes.
-- **Run bridge with `--no-preview --no-webcam`** during firmware development (no virtual webcam needed).
+- **Run bridge with `--timeout 20 --no-preview --no-webcam`** during firmware development (graceful shutdown after 20s, no virtual webcam needed).
 - **Commit after each bridge test** with a message that describes what was tested and what the result was.
 
 ## Project Overview
@@ -332,11 +332,10 @@ writing to it without mounting first will NOT write to the SD card!**
 
 ### Development Workflow
 
-**Run the bridge without preview** during camera firmware development to avoid unnecessary overhead:
+**Run the bridge with timeout** during camera firmware development. Always use `--timeout 20` so the bridge exits gracefully after 20 seconds — this ensures `stop_webcam()` runs and the camera stops recording. Without `--timeout`, killing the bridge (e.g. from Claude Code background bash) skips cleanup and the camera keeps recording indefinitely.
 ```
-"C:/projects/ixus870IS/bridge/build/Release/chdk-webcam.exe" --no-preview --no-webcam
+"C:/projects/ixus870IS/bridge/build/Release/chdk-webcam.exe" --timeout 20 --no-preview --no-webcam
 ```
-Focus on getting the camera firmware pipeline working first; add preview/webcam later.
 
 **After each bridge test run, document the findings and commit all modified files** with a descriptive message documenting the current approach and test results. This ensures we can always revert to a known working state when regressions happen. Include `movie_rec.c` (untracked, must be `git add`'d explicitly) in commits since it contains the spy buffer hooks.
 

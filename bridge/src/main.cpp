@@ -16,6 +16,7 @@
 //   --flip-v            Flip image vertically
 //   --no-webcam         Don't create virtual webcam (display only)
 //   --verbose           Show frame statistics
+//   --timeout N         Exit after N seconds (graceful shutdown)
 
 #include "ptp/ptp_client.h"
 #include "webcam/frame_processor.h"
@@ -44,6 +45,22 @@ static void signal_handler(int) {
     g_running = false;
 }
 
+#ifdef _WIN32
+static BOOL WINAPI console_ctrl_handler(DWORD dwCtrlType) {
+    switch (dwCtrlType) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+        g_running = false;
+        // Give cleanup time to run before Windows kills us
+        Sleep(5000);
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+#endif
+
 struct Options {
     int jpeg_quality = 50;
     int output_width = 1280;
@@ -54,6 +71,7 @@ struct Options {
     bool no_webcam = false;
     bool no_preview = false;
     bool verbose = false;
+    int timeout_sec = 0;
 };
 
 static void print_usage(const char* prog) {
@@ -73,6 +91,7 @@ static void print_usage(const char* prog) {
         "  --no-webcam         Skip virtual webcam creation\n"
         "  --no-preview        Skip preview window\n"
         "  --verbose           Show per-frame statistics\n"
+        "  --timeout N         Exit after N seconds (graceful shutdown)\n"
         "  --help              Show this help\n"
         "\n"
         "Prerequisites:\n"
@@ -104,6 +123,8 @@ static Options parse_args(int argc, char* argv[]) {
             opts.no_preview = true;
         } else if (arg == "--verbose") {
             opts.verbose = true;
+        } else if (arg == "--timeout" && i + 1 < argc) {
+            opts.timeout_sec = atoi(argv[++i]);
         } else if (arg == "--help") {
             print_usage(argv[0]);
             exit(0);
@@ -122,6 +143,9 @@ int main(int argc, char* argv[]) {
     // Install signal handler for graceful shutdown
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
+#ifdef _WIN32
+    SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+#endif
 
 #ifdef _WIN32
     // Enable ANSI escape codes on Windows 10+
@@ -209,9 +233,13 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "WARNING: start_webcam returned false: %s\n", client.get_last_error().c_str());
         fprintf(stderr, "Will try to get frames anyway (module may auto-load).\n");
     }
-    printf("\nStreaming. Press Ctrl+C to stop.\n\n");
+    if (opts.timeout_sec > 0)
+        printf("\nStreaming for %d seconds. Press Ctrl+C to stop early.\n\n", opts.timeout_sec);
+    else
+        printf("\nStreaming. Press Ctrl+C to stop.\n\n");
 
     // --- Main streaming loop ---
+    auto start_time = std::chrono::steady_clock::now();
     auto frame_interval = std::chrono::microseconds(1000000 / opts.target_fps);
     auto stats_interval = std::chrono::seconds(2);
     auto last_stats = std::chrono::steady_clock::now();
@@ -221,6 +249,16 @@ int main(int argc, char* argv[]) {
     uint32_t last_frame_num = 0;
 
     while (g_running) {
+        // Check timeout
+        if (opts.timeout_sec > 0) {
+            auto elapsed = std::chrono::steady_clock::now() - start_time;
+            if (elapsed >= std::chrono::seconds(opts.timeout_sec)) {
+                printf("\nTimeout reached (%d seconds).\n", opts.timeout_sec);
+                g_running = false;
+                break;
+            }
+        }
+
         // Pump window messages first (must run every iteration, not just on successful frames)
         if (preview.is_open() && !preview.pump_messages()) {
             g_running = false;
