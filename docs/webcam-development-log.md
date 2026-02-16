@@ -449,7 +449,29 @@ Now the first msg 6 (IDR frame): STATE=2 → callback promotes 2→3 → post-ch
 
 **Conclusion**: The IDR frame (fn=0) is consumed during recording initialization by **msg 5** (`sub_FF85D3BC`), which writes the MOV container header. It never reaches the per-frame msg 6 path where our spy hook lives. This is a firmware design choice — the first encoded frame goes into the MOV header, subsequent frames go through msg 6.
 
-**Next step**: Intercept msg 5 to capture the IDR frame before it's consumed by the container writer.
+### Msg 5 IDR Capture Hook (2026-02-16)
+
+**Analysis**: Decompiled msg 5 handler (`sub_FF85D3BC`, 680 bytes) using Ghidra headless. It calls:
+1. `FUN_ff8eddfc` — encodes the first frame (IDR) via JPCORE pipeline
+2. `FUN_ff93048c` — reads IDR pointer and size from ring buffer structure
+3. `FUN_ff930b20` — writes MOV container header with IDR data
+
+Key finding from `FUN_ff93048c` (24 bytes):
+```c
+void FUN_ff93048c(undefined4 *param_1, undefined4 *param_2) {
+    int iVar1 = DAT_ff93050c;           // Ring buffer struct pointer (ROM constant)
+    *param_1 = *(undefined4 *)(iVar1 + 0xD8);  // Frame pointer (NAL data, past AVCC prefix)
+    *param_2 = *(undefined4 *)(iVar1 + 0xDC);  // Frame size (NAL size, without prefix)
+}
+```
+
+The ring buffer management structure at `*(0xFF93050C)` stores the first frame (IDR) info at:
+- `+0xD8` = pointer to NAL data (past the 4-byte AVCC length prefix)
+- `+0xDC` = NAL data size (without the length prefix)
+
+**Implementation**: Created `sub_FF85D3BC_my` — a C wrapper that calls the original msg 5 handler, then reads the IDR from the ring buffer structure and passes it to `spy_ring_write(ptr-4, size+4)` in AVCC format. Changed msg 5 dispatch in `movie_record_task` from `BL sub_FF85D3BC` to `BL sub_FF85D3BC_my`.
+
+**Status**: Built and deployed, awaiting test.
 
 ## Future Ideas (Not Yet Implemented)
 

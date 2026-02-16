@@ -48,6 +48,32 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
 }
 
 
+// Msg 5 hook: call original handler, then capture first frame (IDR) from ring buffer.
+// sub_FF85D3BC encodes the first frame and writes the MOV header.
+// After it returns, the ring buffer structure at *(0xFF93050C) contains:
+//   +0xD8 = pointer to NAL data (past AVCC length prefix)
+//   +0xDC = NAL data size (without prefix)
+// We pass ptr-4/size+4 to include the 4-byte AVCC length prefix.
+static void __attribute__((used,noinline)) sub_FF85D3BC_my(int msg)
+{
+    // Call original msg 5 handler (encodes IDR, writes MOV container header)
+    ((void (*)(int))0xFF85D3BC)(msg);
+
+    // Read ring buffer structure pointer from firmware ROM constant
+    unsigned int ring_struct = *(volatile unsigned int *)0xFF93050C;
+    if (ring_struct == 0) return;
+
+    // Read first frame (IDR) pointer and size
+    unsigned char *frame_ptr = (unsigned char *)*(volatile unsigned int *)(ring_struct + 0xD8);
+    unsigned int frame_size = *(volatile unsigned int *)(ring_struct + 0xDC);
+
+    // Pass IDR to spy in AVCC format (ptr-4 includes 4-byte length prefix)
+    if (frame_ptr != 0 && frame_size > 0 && frame_size < 120000) {
+        spy_ring_write(frame_ptr - 4, frame_size + 4);
+    }
+}
+
+
 void __attribute__((naked,noinline)) movie_record_task(){
  // from 0xFF85E03C (found via call to taskcreate_AviWrite)
  asm volatile(
@@ -123,7 +149,7 @@ void __attribute__((naked,noinline)) movie_record_task(){
                  "BL      sub_FF85D6CC\n"
                  "B       loc_FF85E120\n"
  "loc_FF85E10C:\n"
-                 "BL      sub_FF85D3BC\n"
+                 "BL      sub_FF85D3BC_my\n"  // Hook: capture IDR from ring buffer
                  "B       loc_FF85E120\n"
  "loc_FF85E114:\n"
                  "BL      sub_FF85D218\n"
