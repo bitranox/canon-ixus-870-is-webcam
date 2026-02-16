@@ -652,6 +652,36 @@ New approach avoids the race condition entirely:
 
 **Next step**: Add `msg5_done` flag — `spy_msg5_debug` sets it after msg 5 completes, `spy_idr_capture` only fires when `msg5_done` is true. This ensures the IDR is available. Also fix volatile read issue.
 
+## v17 — Debug Frame Protocol (2026-02-16)
+
+Replaced the `hdr[8..15]` debug injection hack (fake AVCC NAL in H.264 frame data) with a proper debug channel using a lock-free SPSC ring buffer and dedicated frame format.
+
+### Implementation
+
+- **Camera producer** (`movie_rec.c`): `spy_debug_reset()` / `spy_debug_add(tag, val)` / `spy_debug_send()` API builds tagged key-value debug frames and enqueues them into a 4-slot ring buffer at `0x000FF040`.
+- **Camera consumer** (`webcam.c`): `capture_frame_h264()` checks the debug queue before `TakeSemaphore`. Debug frames are returned immediately as `WEBCAM_FMT_DEBUG = 3`.
+- **Bridge** (`main.cpp`): `print_debug_frame()` recognizes format=3, prints structured `=== DEBUG FRAME ===` output to stderr, appends to `debug_frames.log`.
+
+See [Debug Frame Protocol](debug-frame-protocol.md) for full specification.
+
+### Test 1: No debug frame received
+
+**Bridge output**: 20s run, H.264 P-frames at 6-19 FPS, camera recorded normally. No `=== DEBUG FRAME ===` output appeared. All frames were H.264 (decoder fails — needs IDR, as expected).
+
+**Root cause**: `get_frame()` in webcam.c had no case for `WEBCAM_FMT_DEBUG`. The format dispatch chain only handled H.264, JPEG, and UYVY. When `capture_frame_h264()` returned a debug frame with `frame_format = WEBCAM_FMT_DEBUG`, it fell through all format checks to the software JPEG fallback, which returned `-1` (no data). Debug frame silently dropped.
+
+**Fix**: Added `WEBCAM_FMT_DEBUG` case to `get_frame()` before the H.264 check:
+```c
+if (frame_format == WEBCAM_FMT_DEBUG && hw_jpeg_data && hw_jpeg_size > 0) {
+    frame->data = hw_jpeg_data;
+    frame->size = hw_jpeg_size;
+    // ... set width/height/frame_num/format
+    return 0;
+}
+```
+
+**Status**: Fix applied, rebuild needed. Not yet re-tested.
+
 ## Future Ideas (Not Yet Implemented)
 
 ### Raw YUV Pipeline Streaming (640x480)

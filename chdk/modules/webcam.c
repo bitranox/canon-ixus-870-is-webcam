@@ -1816,6 +1816,17 @@ static int webcam_get_frame(webcam_frame_t *frame)
         return -1;
     }
 
+    // Debug frame path (tagged key-value diagnostic data)
+    if (frame_format == WEBCAM_FMT_DEBUG && hw_jpeg_data && hw_jpeg_size > 0) {
+        frame->data = hw_jpeg_data;
+        frame->size = hw_jpeg_size;
+        frame->width = frame_width;
+        frame->height = frame_height;
+        frame->frame_num = frame_count;
+        frame->format = WEBCAM_FMT_DEBUG;
+        return 0;
+    }
+
     // H.264 path (Option D: from recording spy buffer)
     if (frame_format == WEBCAM_FMT_H264 && hw_jpeg_data && hw_jpeg_size > 0) {
         frame->data = hw_jpeg_data;
