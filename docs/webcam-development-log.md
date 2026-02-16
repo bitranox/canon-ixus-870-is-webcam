@@ -680,7 +680,37 @@ if (frame_format == WEBCAM_FMT_DEBUG && hw_jpeg_data && hw_jpeg_size > 0) {
 }
 ```
 
-**Status**: Fix applied, rebuild needed. Not yet re-tested.
+**Status**: Fixed, verified in Test 2.
+
+### Test 2: Queue write_idx stays 0
+
+After fixing get_frame(), debug frame still didn't appear. Added `hdr[8]` (write_idx) and `hdr[9]` (read_idx) to diagnostics — both stayed 0 for the entire 20s run. `spy_debug_send()` was never called.
+
+**Root cause**: `spy_idr_capture()` had a `if (!msg5_done) return 0;` gate that waited for msg 5 to fire before sending debug data. But msg 5 never fired (or fired too late). The old working code (commit `1a61d00`) didn't have this gate — it fired on the first msg 6 unconditionally.
+
+**Fix**: Removed the `msg5_done` gate from `spy_idr_capture()`. Debug frame now fires on the first msg 6 with whatever values are available.
+
+### Test 3: Debug frame received successfully
+
+```
+=== DEBUG FRAME #0 (7 entries, 68 bytes) ===
+  RBas = 0x00008968  (35176)
+  IdrP = 0x00000000  (0)
+  IdrS = 0x00000000  (0)
+  M5Pt = 0x00000000  (0)
+  M5Sz = 0x00000000  (0)
+  DatP = 0xDEADDEAD  (3735936685)
+  M5Ct = 0x00000000  (0)
+=== END DEBUG ===
+```
+
+- Debug frame appeared as first frame, before any H.264 data
+- Queue indices: write_idx=1, read_idx=1 (one frame written, one consumed)
+- After debug frame, H.264 FAIL #1 is a normal 42KB P-frame (type=1, as expected)
+- Camera recorded normally throughout
+- All 7 tagged values displayed correctly with 4-char tags
+
+**Debug frame protocol confirmed working.** The SPSC queue, format dispatch, and bridge printer all function correctly.
 
 ## Future Ideas (Not Yet Implemented)
 

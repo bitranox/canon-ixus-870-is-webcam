@@ -131,9 +131,8 @@ static int __attribute__((used,noinline)) spy_idr_capture(void)
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
     unsigned int rb_base, idr_ptr_val, idr_size, data_at_ptr;
 
-    if (hdr[0] != 0x52455753) { idr_sent = 0; msg5_done = 0; return 0; }
+    if (hdr[0] != 0x52455753) { idr_sent = 0; return 0; }
     if (idr_sent) return 0;
-    if (!msg5_done) return 0;
     idr_sent = 1;
 
     rb_base = *(volatile unsigned int *)0xFF93050C;

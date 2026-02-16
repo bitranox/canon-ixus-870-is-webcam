@@ -657,8 +657,8 @@ bool PTPClient::get_frame(MJPEGFrame& frame) {
                     fprintf(stderr, "    +0x1C msg queue      = 0x%08X\n", u32(68));
                     fprintf(stderr, "    +0x24 flag           = %u\n", u32(72));
                     fprintf(stderr, "    +0x28 counter        = %u\n", u32(76));
-                    fprintf(stderr, "    +0x2C flag           = %u\n", u32(80));
-                    fprintf(stderr, "    +0x30 counter        = %u\n", u32(84));
+                    fprintf(stderr, "    dbg_queue write_idx  = %u\n", u32(80));
+                    fprintf(stderr, "    dbg_queue read_idx   = %u\n", u32(84));
                     fprintf(stderr, "    +0x38 counter        = %u\n", u32(88));
                     fprintf(stderr, "    +0x3C STATE          = %u  %s\n", u32(92),
                             u32(92) == 0 ? "(idle)" :

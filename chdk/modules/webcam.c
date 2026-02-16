@@ -1317,8 +1317,8 @@ static int capture_frame_h264(void)
         D32(68, hdr[1]);               // spy src_ptr (ring buffer address from sub_FF92FE8C)
         D32(72, hdr[2]);               // spy frame_size (written by spy_ring_write)
         D32(76, hdr[3]);               // spy frame_count (written by spy_ring_write)
-        D32(80, hdr[4]);               // spy (unused)
-        D32(84, hdr[5]);               // spy sem_handle
+        D32(80, hdr[8]);               // debug queue write_idx
+        D32(84, hdr[9]);               // debug queue read_idx
         // Movie task fields related to frame skip logic in sub_FF85D98C_my
         // LDRH [R6,#2] reads halfword at byte +2 = upper 16 bits of word 0 (LE)
         D32(88, (movtask[0] >> 16) & 0xFFFF);  // movtask+0x02 halfword (frame skip mode)
