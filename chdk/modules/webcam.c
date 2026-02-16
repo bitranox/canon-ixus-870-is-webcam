@@ -1360,18 +1360,15 @@ static int capture_frame_h264(void)
 
     // One-shot debug injection: spy_idr_capture() writes debug values to
     // hdr[8..15] (persistent slots not touched by spy_ring_write).
-    // When the marker is present, prepend a 36-byte debug AVCC NAL to the
-    // frame data.  The AVCC parser will find NAL type=1 and return just
-    // the 36-byte debug NAL.  The bridge H.264 decoder will fail and print
-    // the hex dump — showing all our ring buffer diagnostic values.
-    if (hdr[8] == 0xDB600001 && size + 36 <= SPY_BUF_SIZE) {
-        // Shift frame data right by 36 bytes to make room for debug NAL
-        // (manual reverse copy — memmove not available in CHDK modules)
-        {
-            unsigned int i;
-            for (i = size; i > 0; i--)
-                frame_data_buf[i + 36 - 1] = frame_data_buf[i - 1];
-        }
+    // When the marker is present, OVERWRITE the first 36 bytes of frame
+    // data with a debug AVCC NAL.  The AVCC parser finds NAL type=1 and
+    // returns only the 36-byte debug NAL.  The bridge decoder fails and
+    // prints the hex dump — showing our ring buffer diagnostic values.
+    //
+    // Previous approach (shift + prepend) failed: sub_FF92FE8C returns
+    // size=0x40000 (256KB ring chunk), clipped to SPY_BUF_SIZE=64KB,
+    // so "size + 36 <= SPY_BUF_SIZE" was always false.
+    if (hdr[8] == 0xDB600001 && size >= 36) {
         // AVCC length prefix (big-endian): 32 bytes of NAL data
         frame_data_buf[0] = 0x00;
         frame_data_buf[1] = 0x00;
@@ -1396,7 +1393,7 @@ static int capture_frame_h264(void)
         frame_data_buf[33] = 0xDB;
         frame_data_buf[34] = 0xDB;
         frame_data_buf[35] = 0xDB;
-        size += 36;
+        size = 36;  // Return only the debug NAL
         hdr[8] = 0;  // Clear marker — one-shot
     }
 

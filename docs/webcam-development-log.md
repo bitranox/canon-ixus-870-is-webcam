@@ -598,15 +598,15 @@ Timeline:
 3. Next msg 6 → `spy_ring_write(P-frame, 40KB)` → overwrites hdr[1]/hdr[2]
 4. webcam.c finally runs → reads P-frame, not debug frame
 
-### Test 4: Persistent debug via hdr[8..15] + webcam.c injection — PENDING
+### Test 4: Persistent debug via hdr[8..15] + webcam.c injection — size check bug
 
 New approach avoids the race condition entirely:
 
 **movie_rec.c**: `spy_idr_capture()` writes debug values to `hdr[8..15]` (spy buffer slots NOT touched by `spy_ring_write`), returns 0 to let the P-frame through normally.
 
-**webcam.c**: In `capture_frame_h264()`, after memcpy of P-frame data, checks `hdr[8]` for debug marker `0xDB600001`. If found, prepends a 36-byte debug AVCC NAL to the frame data (shifting P-frame data right by 36 bytes). The AVCC parser finds NAL type=1 in the debug NAL → `have_vcl=1` → returns only the 36-byte debug portion. Bridge decoder fails on it and prints hex dump with all debug values.
+**webcam.c**: In `capture_frame_h264()`, after memcpy of P-frame data, checks `hdr[8]` for debug marker `0xDB600001`. If found, shifts frame data right by 36 bytes and prepends a 36-byte debug AVCC NAL.
 
-**Debug NAL layout** (36 bytes prepended to frame):
+**Debug NAL layout** (36 bytes):
 | Bytes | Content | Endian |
 |-------|---------|--------|
 | 0-3 | AVCC length = 32 | big-endian |
@@ -622,9 +622,35 @@ New approach avoids the race condition entirely:
 | 28-31 | data at idr_ptr (first 4 bytes) | little-endian |
 | 32-35 | 0xDB padding | — |
 
-One-shot: webcam.c clears hdr[8] after injection, so only the first frame is affected.
+**Result**: FAIL — first frame is a normal ~38KB P-frame (NAL=0x61). The debug NAL never appeared.
 
-**Status**: Deployed to SD card, awaiting bridge test.
+**Root cause**: `sub_FF92FE8C` returns size = 262144 (0x40000 = 256KB ring buffer chunk), not the AVCC frame size. After clipping: `size = min(262144, 65536) = 65536 = SPY_BUF_SIZE`. The injection guard `size + 36 <= SPY_BUF_SIZE` evaluates to `65572 > 65536` → **always false**. The injection never fires.
+
+### Test 5: Fixed size check — debug data received!
+
+**Fix**: Changed injection from shift+prepend to OVERWRITE first 36 bytes of frame data. Guard changed to `size >= 36` (always true). AVCC parser finds the 32-byte debug NAL (type=1) first and returns only 36 bytes. Bridge decoder fails and prints hex dump.
+
+**Result**: FAIL #1 is exactly 36 bytes — the debug NAL:
+```
+00 00 00 20 61 db 00 db 68 89 00 00 00 00 00 00 00 00 00 00 00 00 00 00 04 00 00 00 0a 00 00 00
+```
+
+**Decoded debug values**:
+| Field | Value | Meaning |
+|-------|-------|---------|
+| msg5_count | **0** | msg 5 was NEVER called before first msg 6 |
+| rb_base | 0x00008968 | Ring buffer struct exists |
+| idr_ptr (+0xD8) | **0x00000000** | IDR pointer is NULL — not written yet |
+| idr_size (+0xDC) | **0** | No IDR data |
+| msg5_idr_ptr | 0 | spy_msg5_debug never ran |
+| msg5_idr_size | 4 | Unexpected (should be 0 — possible memcpy-from-volatile issue) |
+| data_at_ptr | 0x0A | Unexpected (should be 0xDEADDEAD — same memcpy issue) |
+
+**Key finding: msg 6 (P-frame) arrives in the message queue BEFORE msg 5 (IDR encoding).** The `movie_record_task` message loop processes messages FIFO. The first msg 6 is dequeued and processed before msg 5 has been posted or processed. Therefore `spy_idr_capture()` runs when `+0xD8` is still NULL — the IDR hasn't been encoded yet.
+
+**Secondary issue**: `memcpy(frame_data_buf + 8, (void *)&hdr[9], 24)` casts away `volatile` qualifier. Some debug values (msg5_idr_size=4, data_at_ptr=0x0A) don't match expected values, suggesting memcpy may read stale/incorrect data from volatile memory. Should use individual volatile reads instead.
+
+**Next step**: Add `msg5_done` flag — `spy_msg5_debug` sets it after msg 5 completes, `spy_idr_capture` only fires when `msg5_done` is true. This ensures the IDR is available. Also fix volatile read issue.
 
 ## Future Ideas (Not Yet Implemented)
 
