@@ -1317,7 +1317,7 @@ static int capture_frame_h264(void)
         D32(68, hdr[1]);               // spy src_ptr (ring buffer address from sub_FF92FE8C)
         D32(72, hdr[2]);               // spy frame_size (written by spy_ring_write)
         D32(76, hdr[3]);               // spy frame_count (written by spy_ring_write)
-        D32(80, hdr[4]);               // spy ready flag (1=consumer ready, 0=frame pending)
+        D32(80, hdr[4]);               // spy (unused)
         D32(84, hdr[5]);               // spy sem_handle
         // Movie task fields related to frame skip logic in sub_FF85D98C_my
         // LDRH [R6,#2] reads halfword at byte +2 = upper 16 bits of word 0 (LE)
@@ -1353,13 +1353,9 @@ static int capture_frame_h264(void)
     {
         unsigned char *src_ptr = (unsigned char *)hdr[1];
         size = hdr[2];
-        if (!src_ptr || size == 0) {
-            hdr[4] = 1;  // Ready for next frame
-            return 0;
-        }
+        if (!src_ptr || size == 0) return 0;
         if (size > SPY_BUF_SIZE) size = SPY_BUF_SIZE;
         memcpy(frame_data_buf, src_ptr, size);
-        hdr[4] = 1;  // Ready for next frame (back-pressure release)
     }
 
     // Capture first 8 bytes for Block 1 diagnostics
@@ -1404,7 +1400,7 @@ static int capture_frame_h264(void)
         int nal_count = 0;
         int have_vcl = 0;
 
-        while (pos + 5 <= size && nal_count < 4) {
+        while (pos + 5 <= size && nal_count < 8) {
             unsigned int nal_len = ((unsigned int)p[pos] << 24) |
                                   ((unsigned int)p[pos+1] << 16) |
                                   ((unsigned int)p[pos+2] << 8) |
@@ -1428,7 +1424,8 @@ static int capture_frame_h264(void)
                 break;
             }
 
-            if (nal_type != 1 && nal_type != 5 && nal_type != 6) {
+            if (nal_type != 1 && nal_type != 5 && nal_type != 6 &&
+                nal_type != 7 && nal_type != 8) {
                 dbg_parse_result = 0x30 | nal_type;   // unexpected NAL type
                 break;
             }
@@ -1620,7 +1617,6 @@ static int webcam_start(int jpeg_quality)
         int si;
         for (si = 0; si < 16; si++) spy[si] = 0;   // Clear all
         spy[5] = (unsigned int)frame_sem;             // Semaphore handle
-        spy[4] = 1;                                   // Ready for first frame (back-pressure)
         spy[0] = 0x52455753;                          // Magic (enable LAST)
     }
 

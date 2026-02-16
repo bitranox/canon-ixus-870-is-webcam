@@ -419,20 +419,9 @@ The callback at +0xA0 promotes STATE 2→3 on its first invocation. This means:
 
 The IDR is always the frame that triggers the 2→3 transition, and the firmware skips it because STATE hasn't reached 4 yet.
 
-### Two Fixes Applied (2026-02-16)
+### Fixes Applied (2026-02-16)
 
-**Fix 1: Back-pressure spy buffer protocol** — prevents first frame overwrite during startup.
-
-Previously, `spy_ring_write` was a single-element buffer that overwrote on every call. During the `webcam_start()` msleep(100) wait loop (up to 5 seconds), ~150 frames overwrote each other. The first frame was always lost.
-
-Changed `spy_ring_write` to check `hdr[4]` ("ready" flag): only write when the consumer has read the previous frame. Consumer sets `hdr[4]=1` after `memcpy`. Initialization sets `hdr[4]=1` for the first frame.
-
-Files changed:
-- `movie_rec.c` spy_ring_write: check `hdr[4]==1` before writing, set `hdr[4]=0` after
-- `webcam.c` webcam_start: set `hdr[4]=1` during init
-- `webcam.c` capture_frame_h264: set `hdr[4]=1` after reading
-
-**Fix 2: STATE 3→4 promotion after callback** — captures the IDR on first msg 6.
+**Fix 1: STATE 3→4 promotion after callback** — captures the IDR on first msg 6.
 
 Added 3 ARM instructions after the callback in `sub_FF85D98C_my` to also promote STATE 3→4 in the post-callback check:
 ```asm
@@ -445,7 +434,11 @@ Added 3 ARM instructions after the callback in `sub_FF85D98C_my` to also promote
 
 Now the first msg 6 (IDR frame): STATE=2 → callback promotes 2→3 → post-check promotes 3→4 → **CONTINUE (IDR captured!)**.
 
-**Status**: Built and deployed. Awaiting test.
+**Fix 2: AVCC parser accepts SPS/PPS NAL types** — IDR frames may contain inline SPS (type 7) + PPS (type 8) preamble before the IDR slice (type 5). The parser previously only accepted types 1, 5, 6 and silently rejected frames starting with SPS/PPS (`dbg_parse_result = 0x37/0x38`). Added types 7 and 8 to the accepted list, treated as non-VCL (skipped, like SEI). Also increased NAL count limit from 4 to 8 to handle SPS+PPS+SEI+IDR.
+
+**Back-pressure (tested and removed)**: A back-pressure protocol was tested (`hdr[4]` ready flag) to prevent the first frame from being overwritten during startup. While it preserved the first frame, it severely limited throughput (5 FPS vs 30 FPS) because the consumer could only process one frame per PTP round-trip. Removed in favor of the simpler overwrite protocol. If needed in the future, the implementation is documented in git history (commit 6f24641).
+
+**Status**: Built and deployed. Awaiting test with STATE fix + parser fix (no back-pressure).
 
 ## Future Ideas (Not Yet Implemented)
 
