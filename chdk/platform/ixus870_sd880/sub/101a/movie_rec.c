@@ -85,7 +85,7 @@ static int __attribute__((used,noinline)) spy_idr_capture(void)
     if (idr_sent) return 0;  // Already sent debug this session
     idr_sent = 1;
 
-    // Read ring buffer struct values (same as before)
+    // Read ring buffer struct values
     rb_base = *(volatile unsigned int *)0xFF93050C;
     idr_ptr_val = (rb_base != 0) ? *(volatile unsigned int *)(rb_base + 0xD8) : 0;
     idr_size = (rb_base != 0) ? *(volatile unsigned int *)(rb_base + 0xDC) : 0;
@@ -97,58 +97,20 @@ static int __attribute__((used,noinline)) spy_idr_capture(void)
         data_at_ptr = 0xDEADDEAD;
     }
 
-    // Build 64-byte debug frame disguised as NAL type=1 (P-frame).
-    // webcam.c AVCC parser only passes type 1 or 5 to the bridge.
-    // Bridge decoder will FAIL on it and print hex dump — that's what we want.
-    //
-    // Layout (all uint32 in native little-endian unless noted):
-    //   [0-3]   AVCC length prefix (big-endian = 60)
-    //   [4]     NAL header 0x61 (type=1, NRI=3) — passes AVCC parser
-    //   [5]     msg5_count (low byte)
-    //   [6-7]   0xDB 0xDB marker
-    //   [8-11]  rb_base
-    //   [12-15] idr_ptr from current +0xD8
-    //   [16-19] idr_size from current +0xDC
-    //   [20-23] msg5_idr_ptr (captured during msg 5)
-    //   [24-27] msg5_idr_size (captured during msg 5)
-    //   [28-31] first 4 bytes at idr_ptr (to check if data is IDR)
-    idr_debug_buf[0] = 0x00;
-    idr_debug_buf[1] = 0x00;
-    idr_debug_buf[2] = 0x00;
-    idr_debug_buf[3] = 0x3C;  // AVCC length = 60 (big-endian)
-    idr_debug_buf[4] = 0x61;  // NAL type 1 (P-frame) — passes webcam.c filter
-    idr_debug_buf[5] = (unsigned char)(msg5_count & 0xFF);
-    idr_debug_buf[6] = 0xDB;
-    idr_debug_buf[7] = 0xDB;
+    // Write debug values to hdr[8..13] — persistent slots NOT touched by
+    // spy_ring_write.  webcam.c will inject these into the first frame.
+    // Previous approach (spy_ring_write debug frame) failed due to race:
+    // next msg 6 P-frame overwrites spy buffer before webcam.c reads it.
+    hdr[8]  = 0xDB600001;      // Debug marker (webcam.c checks this)
+    hdr[9]  = rb_base;         // Ring buffer struct base from 0xFF93050C
+    hdr[10] = idr_ptr_val;     // Current +0xD8 value (IDR NAL pointer)
+    hdr[11] = idr_size;        // Current +0xDC value (IDR NAL size)
+    hdr[12] = msg5_idr_ptr;    // +0xD8 captured during msg 5
+    hdr[13] = msg5_idr_size;   // +0xDC captured during msg 5
+    hdr[14] = data_at_ptr;     // First 4 bytes at idr_ptr (IDR data check)
+    hdr[15] = msg5_count;      // How many times msg 5 was called
 
-    // Bytes 8-31: uint32 debug values in native little-endian
-    {
-        unsigned int *dbg = (unsigned int *)(idr_debug_buf + 8);
-        dbg[0] = rb_base;           // bytes 8-11:  ring buffer struct base
-        dbg[1] = idr_ptr_val;       // bytes 12-15: current +0xD8 value
-        dbg[2] = idr_size;          // bytes 16-19: current +0xDC value
-        dbg[3] = msg5_idr_ptr;      // bytes 20-23: msg5 captured +0xD8
-        dbg[4] = msg5_idr_size;     // bytes 24-27: msg5 captured +0xDC
-        dbg[5] = data_at_ptr;       // bytes 28-31: first 4 bytes at idr_ptr
-    }
-    // Bytes 32-63: extended debug
-    {
-        unsigned int *dbg2 = (unsigned int *)(idr_debug_buf + 32);
-        dbg2[0] = msg5_rb_base;     // bytes 32-35: msg5 rb_base
-        dbg2[1] = hdr[3];           // bytes 36-39: spy frame counter
-        dbg2[2] = msg5_count;       // bytes 40-43: msg5 call count (full)
-        if (idr_ptr_val != 0 && idr_ptr_val >= 4 && idr_ptr_val < 0x40000000) {
-            dbg2[3] = *(volatile unsigned int *)(idr_ptr_val - 4);
-        } else {
-            dbg2[3] = 0xDEADDEAD;
-        }
-        dbg2[4] = 0xDBDBDBDB;      // end marker
-    }
-
-    // Send debug frame — webcam.c will pass it (NAL type=1), bridge will
-    // fail to decode and print hex dump with all our debug values
-    spy_ring_write(idr_debug_buf, 64);
-    return 1;  // Skip P-frame, debug frame sent instead
+    return 0;  // Let P-frame through — webcam.c injects debug into it
 }
 
 

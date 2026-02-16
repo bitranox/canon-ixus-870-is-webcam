@@ -586,23 +586,43 @@ Added `spy_msg5_debug()` called after `sub_FF85D3BC` in `movie_record_task()` to
 
 **Root cause found**: webcam.c's AVCC parser at `capture_frame_h264()` only accepts NAL types 1 (P-frame) or 5 (IDR). NAL type 9 (AUD) was silently discarded — `have_vcl` stayed 0, function returned 0. The debug frame WAS being sent via `spy_ring_write`, but webcam.c filtered it out before it reached the bridge.
 
-### Test 3: Debug frame with NAL type 1 — PENDING
+### Test 3: Debug frame with NAL type 1 — INVISIBLE (race condition)
 
-Fixed debug frame to use NAL header 0x61 (type=1, NRI=3) so it passes webcam.c's AVCC parser. The bridge H.264 decoder will fail on the 64-byte garbage payload and print a hex dump containing all debug values (rb_base, idr_ptr, idr_size, msg5 values, data at idr_ptr).
+Fixed debug frame to use NAL header 0x61 (type=1) so it passes webcam.c's AVCC parser. Bridge run showed USB pipe error (camera needed power cycle). Second run: connection OK but debug frame still never appeared — all frames were normal ~40KB P-frames.
 
-**Debug frame layout** (64 bytes, first 32 visible in bridge hex dump):
+**Root cause: spy buffer race condition.** The `spy_ring_write` protocol is a single-element overwrite buffer. `spy_idr_capture()` sends the 64-byte debug frame via `spy_ring_write`, then returns 1 (skipping this msg 6's P-frame). But `movie_record_task` processes queued messages back-to-back without blocking — the NEXT msg 6 fires immediately and calls `spy_ring_write` with a P-frame, overwriting `hdr[1]`/`hdr[2]` before webcam.c (lower priority task) can read the debug frame.
+
+Timeline:
+1. `spy_idr_capture` → `spy_ring_write(debug_buf, 64)` → GiveSemaphore
+2. movie_record_task does NOT yield (higher priority)
+3. Next msg 6 → `spy_ring_write(P-frame, 40KB)` → overwrites hdr[1]/hdr[2]
+4. webcam.c finally runs → reads P-frame, not debug frame
+
+### Test 4: Persistent debug via hdr[8..15] + webcam.c injection — PENDING
+
+New approach avoids the race condition entirely:
+
+**movie_rec.c**: `spy_idr_capture()` writes debug values to `hdr[8..15]` (spy buffer slots NOT touched by `spy_ring_write`), returns 0 to let the P-frame through normally.
+
+**webcam.c**: In `capture_frame_h264()`, after memcpy of P-frame data, checks `hdr[8]` for debug marker `0xDB600001`. If found, prepends a 36-byte debug AVCC NAL to the frame data (shifting P-frame data right by 36 bytes). The AVCC parser finds NAL type=1 in the debug NAL → `have_vcl=1` → returns only the 36-byte debug portion. Bridge decoder fails on it and prints hex dump with all debug values.
+
+**Debug NAL layout** (36 bytes prepended to frame):
 | Bytes | Content | Endian |
 |-------|---------|--------|
-| 0-3 | AVCC length = 60 | big-endian |
+| 0-3 | AVCC length = 32 | big-endian |
 | 4 | NAL header 0x61 (type=1) | — |
-| 5 | msg5_count (low byte) | — |
-| 6-7 | 0xDB 0xDB marker | — |
+| 5 | 0xDB marker | — |
+| 6 | msg5_count (low byte) | — |
+| 7 | 0xDB marker | — |
 | 8-11 | rb_base | little-endian |
 | 12-15 | idr_ptr (current +0xD8) | little-endian |
 | 16-19 | idr_size (current +0xDC) | little-endian |
 | 20-23 | msg5_idr_ptr | little-endian |
 | 24-27 | msg5_idr_size | little-endian |
-| 28-31 | first 4 bytes at idr_ptr | little-endian |
+| 28-31 | data at idr_ptr (first 4 bytes) | little-endian |
+| 32-35 | 0xDB padding | — |
+
+One-shot: webcam.c clears hdr[8] after injection, so only the first frame is affected.
 
 **Status**: Deployed to SD card, awaiting bridge test.
 

@@ -1358,6 +1358,48 @@ static int capture_frame_h264(void)
         memcpy(frame_data_buf, src_ptr, size);
     }
 
+    // One-shot debug injection: spy_idr_capture() writes debug values to
+    // hdr[8..15] (persistent slots not touched by spy_ring_write).
+    // When the marker is present, prepend a 36-byte debug AVCC NAL to the
+    // frame data.  The AVCC parser will find NAL type=1 and return just
+    // the 36-byte debug NAL.  The bridge H.264 decoder will fail and print
+    // the hex dump — showing all our ring buffer diagnostic values.
+    if (hdr[8] == 0xDB600001 && size + 36 <= SPY_BUF_SIZE) {
+        // Shift frame data right by 36 bytes to make room for debug NAL
+        // (manual reverse copy — memmove not available in CHDK modules)
+        {
+            unsigned int i;
+            for (i = size; i > 0; i--)
+                frame_data_buf[i + 36 - 1] = frame_data_buf[i - 1];
+        }
+        // AVCC length prefix (big-endian): 32 bytes of NAL data
+        frame_data_buf[0] = 0x00;
+        frame_data_buf[1] = 0x00;
+        frame_data_buf[2] = 0x00;
+        frame_data_buf[3] = 0x20;  // length = 32
+        // NAL header: type=1 (P-frame), NRI=3 → 0x61
+        frame_data_buf[4] = 0x61;
+        // Marker byte + msg5_count
+        frame_data_buf[5] = 0xDB;
+        frame_data_buf[6] = (unsigned char)(hdr[15] & 0xFF);  // msg5_count
+        frame_data_buf[7] = 0xDB;
+        // Pack hdr[9..14] as 6 uint32 values (24 bytes) — little-endian
+        // bytes 8-11:  rb_base
+        // bytes 12-15: idr_ptr (current +0xD8)
+        // bytes 16-19: idr_size (current +0xDC)
+        // bytes 20-23: msg5_idr_ptr
+        // bytes 24-27: msg5_idr_size
+        // bytes 28-31: data_at_idr_ptr (first 4 bytes)
+        memcpy(frame_data_buf + 8, (void *)&hdr[9], 24);
+        // Pad bytes 32-35
+        frame_data_buf[32] = 0xDB;
+        frame_data_buf[33] = 0xDB;
+        frame_data_buf[34] = 0xDB;
+        frame_data_buf[35] = 0xDB;
+        size += 36;
+        hdr[8] = 0;  // Clear marker — one-shot
+    }
+
     // Capture first 8 bytes for Block 1 diagnostics
     if (frame_data_buf && size >= 8) {
         dbg_first8[0] = ((unsigned int)frame_data_buf[0] << 24) |
