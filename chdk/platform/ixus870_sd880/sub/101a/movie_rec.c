@@ -1,7 +1,6 @@
 #include "conf.h"
 
 // Firmware stubs used by spy_ring_write
-extern void *_memcpy(void *dest, const void *src, long n);
 extern void _GiveSemaphore(int sem);
 
 void change_video_tables(__attribute__ ((unused))int a, __attribute__ ((unused))int b) {}
@@ -12,34 +11,26 @@ void  set_quality(int *x){ // -17 highest; +12 lowest
 }
 
 
-// Copy H.264 frame data to webcam module's buffer and signal semaphore.
+// Store H.264 frame pointer and signal semaphore (Option 2: pointer pass-through).
 // Called from sub_FF85D98C_my after sub_FF92FE8C returns encoded frame.
+// Does NOT copy data — just stores the ring buffer pointer for the webcam module
+// to read directly via its own memcpy.
 //
 // Shared memory protocol at 0x000FF000 (initialized by webcam.c):
 //   [0] magic    = 0x52455753 when active (set by webcam.c)
-//   [1] data_ptr = frame buffer (malloc'd by webcam.c)
-//   [2] size     = actual bytes copied (written here)
+//   [1] src_ptr  = ring buffer pointer (written here, read by webcam.c)
+//   [2] size     = frame data size (written here)
 //   [3] count    = frame counter (written LAST, here)
-//   [4] max_size = buffer capacity (set by webcam.c)
 //   [5] sem      = semaphore handle (set by webcam.c)
 static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, unsigned int size)
 {
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    unsigned char *dst;
-    unsigned int copy_size, sem_handle;
+    unsigned int sem_handle;
 
     if (hdr[0] != 0x52455753) return;  // Not initialized by webcam.c
 
-    dst = (unsigned char *)hdr[1];
-    if (dst == 0) return;
-
-    copy_size = hdr[4];                // Max buffer size
-    if (copy_size == 0) return;
-    if (size < copy_size) copy_size = size;
-
-    _memcpy(dst, ptr, copy_size);
-
-    hdr[2] = copy_size;                // Actual frame size
+    hdr[1] = (unsigned int)ptr;        // Source pointer (ring buffer address)
+    hdr[2] = size;                     // Frame data size
     hdr[3]++;                          // Frame counter (incremented LAST)
 
     sem_handle = hdr[5];

@@ -1261,10 +1261,10 @@ static int capture_frame_hwjpeg(void)
 // H.264 frame capture from recording spy buffer (Option D)
 // ============================================================
 
-// Capture an H.264 encoded frame via semaphore-based delivery.
-// movie_rec.c's spy_ring_write() copies frame data to frame_data_buf
-// and signals frame_sem on every encoded frame.  We block on the
-// semaphore (max 100ms) for synchronized delivery — no polling.
+// Capture an H.264 encoded frame via pointer pass-through (Option 2).
+// movie_rec.c's spy_ring_write() stores the ring buffer pointer and size
+// in the spy header, then signals frame_sem.  We block on the semaphore
+// (max 100ms), then memcpy from the ring buffer pointer to frame_data_buf.
 //
 // The data is H.264 NAL units in AVCC format (4-byte big-endian
 // length prefix, as used in MOV containers).
@@ -1314,7 +1314,7 @@ static int capture_frame_h264(void)
 
         // Block 1 (64-127): Spy buffer state + movie task frame-skip fields
         D32(64, hdr[0]);               // spy magic (should be 0x52455753)
-        D32(68, hdr[1]);               // spy data_ptr
+        D32(68, hdr[1]);               // spy src_ptr (ring buffer address from sub_FF92FE8C)
         D32(72, hdr[2]);               // spy frame_size (written by spy_ring_write)
         D32(76, hdr[3]);               // spy frame_count (written by spy_ring_write)
         D32(80, hdr[4]);               // spy max_size
@@ -1342,13 +1342,21 @@ static int capture_frame_h264(void)
     if (hdr[0] != 0x52455753) return 0;
 
     // Block until movie_rec.c signals a new frame (max 100ms).
-    // spy_ring_write() does memcpy + GiveSemaphore(frame_sem).
+    // spy_ring_write() stores ptr+size and calls GiveSemaphore(frame_sem).
     sem_ret = TakeSemaphore(frame_sem, 100);
     last_sem_ret = sem_ret;
     if (sem_ret != 0) return 0;  // Timeout — no frame available
 
-    // Frame data is already in frame_data_buf (copied by spy_ring_write).
-    size = hdr[2];  // Actual bytes copied
+    // Option 2: copy from ring buffer pointer stored by spy_ring_write.
+    // hdr[1] = source pointer (ring buffer address from sub_FF92FE8C)
+    // hdr[2] = frame data size
+    {
+        unsigned char *src_ptr = (unsigned char *)hdr[1];
+        size = hdr[2];
+        if (!src_ptr || size == 0) return 0;
+        if (size > SPY_BUF_SIZE) size = SPY_BUF_SIZE;
+        memcpy(frame_data_buf, src_ptr, size);
+    }
 
     // Capture first 8 bytes for Block 1 diagnostics
     if (frame_data_buf && size >= 8) {
@@ -1601,12 +1609,12 @@ static int webcam_start(int jpeg_quality)
 
     // Initialize shared spy buffer header (must be done BEFORE starting
     // recording so spy_ring_write sees valid state from the first frame).
+    // Option 2: spy_ring_write writes hdr[1] (src pointer) and hdr[2] (size)
+    // per frame — we only need to set magic and semaphore here.
     {
         volatile unsigned int *spy = WEBCAM_SPY_ADDR;
         int si;
         for (si = 0; si < 16; si++) spy[si] = 0;   // Clear all
-        spy[1] = (unsigned int)frame_data_buf;       // Data buffer pointer
-        spy[4] = SPY_BUF_SIZE;                       // Max buffer size
         spy[5] = (unsigned int)frame_sem;             // Semaphore handle
         spy[0] = 0x52455753;                          // Magic (enable LAST)
     }

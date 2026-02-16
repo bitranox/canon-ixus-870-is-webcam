@@ -337,6 +337,39 @@ Read directly from Canon's H.264 ring buffer (managed by `DAT_ff93050c` at 0xFF9
 
 **Option 2 (pointer pass-through)** offers the best balance: simple change, eliminates the _memcpy mystery, and the race condition is manageable. If it works, we know the issue was _memcpy in the firmware context. If it doesn't work (data at ptr is also zeros), we know the source pointer itself is the problem, narrowing the investigation to sub_FF92FE8C's output.
 
+### Fourth Test — Option 2 Pointer Pass-Through (2026-02-16)
+
+Implemented Option 2: spy_ring_write stores ptr+size only (no _memcpy), capture_frame_h264 does memcpy from the stored pointer after TakeSemaphore.
+
+**Result**: **H.264 streaming working — 62 frames decoded at 30.5 FPS!**
+
+Camera started recording (user confirmed). Bridge received 250+ H.264 frames with valid AVCC format over the 20-second test.
+
+| Metric | Value |
+|--------|-------|
+| Frames received | 250+ (bridge logs sample) |
+| Frames decoded | 62 (in final stats window) |
+| FPS | 30.5 |
+| Bitrate | 10,228 kbps |
+| Avg frame size | 40.9 KB |
+| Frame sizes | 37-43 KB range |
+| Resolution | 640x480 |
+| NAL types seen | All 25 sampled = type 1 (P-frame, NAL 0x61) |
+| IDR frames | Present (decoder synced), but none in sampled log entries |
+
+**Decoder sync behavior**: The first ~50 frames failed with "Decoder needs more data" — FFmpeg needs an IDR keyframe (type=5) before it can decode P-frames. After receiving enough frames, the decoder synced and output 62 frames at 30.5 FPS in the final stats window. The `H.264 decoder: 640x480 -> 1280x720 RGB` message confirms successful initialization.
+
+**movtask diagnostics confirm IDR frames exist**: `movtask[+0x6C]` shows `0x00000065` (NAL header for IDR/type=5) on some frames, confirming Canon's encoder produces IDR keyframes. They just weren't among the 25 sampled log entries (bridge logs frames 1-20, then every 50th).
+
+**Root cause confirmed**: Canon firmware's `_memcpy` in spy_ring_write did NOT copy data to the destination buffer. The exact cause (DMA engine, argument convention, memory region restriction) is unknown, but the fix is clear: let the CHDK module do its own memcpy from the ring buffer pointer instead.
+
+**Race condition assessment**: No data corruption observed in 250+ frames. The memcpy in capture_frame_h264 completes well within the 33ms frame period. The ring buffer pointer from sub_FF92FE8C remains valid until the next frame is processed by movie_record_task.
+
+**Remaining issues**:
+1. **Initial decoder sync delay**: ~50 frames lost waiting for first IDR. Could be improved by detecting IDR frames and only starting PTP delivery when one arrives.
+2. **Stats show 0 FPS for first 8 seconds**: Bridge drops frames while decoder accumulates enough data to sync. Once synced, immediately jumps to 30.5 FPS.
+3. **SD card device changed**: After SDHCI driver reload, SD card now appears as `/dev/mmcblk1p1` instead of `/dev/mmcblk0p1`. Added `NOT_MOUNTED.txt` marker files to `/mnt/sdcard` and `/mnt/mmc` to prevent accidental writes to unmounted paths.
+
 ## Future Ideas (Not Yet Implemented)
 
 ### Raw YUV Pipeline Streaming (640x480)
