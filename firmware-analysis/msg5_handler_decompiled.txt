@@ -1,0 +1,131 @@
+========================================================================
+Msg 5 Handler: sub_FF85D3BC
+Firmware: IXUS 870 IS / SD 880 IS, version 1.01a
+Purpose: IDR frame encoding + MOV container header writing
+========================================================================
+
+// === FUN_ff85d3bc @ ff85d3bc (size=680 bytes) ===
+// Signature: void FUN_ff85d3bc(void);
+
+
+void FUN_ff85d3bc(void)
+
+{
+  int iVar1;
+  int iVar2;
+  undefined4 uVar3;
+  code *pcVar4;
+  int iVar5;
+  undefined4 uVar6;
+  undefined1 auStack_134 [8];
+  undefined4 local_12c;
+  int local_11c;
+  int local_118;
+  byte local_114;
+  undefined1 auStack_113 [32];
+  undefined1 local_f3;
+  undefined1 auStack_f2 [130];
+  undefined4 local_70;
+  int local_6c;
+  int local_68;
+  int iStack_64;
+  undefined4 uStack_60;
+  undefined4 local_5c;
+  int local_58;
+  undefined4 local_54;
+  undefined2 local_50;
+  uint local_4c;
+  undefined4 local_48;
+  int local_44;
+  int local_40;
+  undefined4 local_3c;
+  undefined1 auStack_38 [25];
+  undefined1 auStack_1f [7];
+  
+  uVar6 = 0xf;
+  iVar2 = *DAT_ff85d6a4;
+  iVar5 = 0;
+  uVar3 = FUN_ff930b04(iVar2 + 0x200040);
+  FUN_ff8ee08c(&LAB_ff85d3b0,0);
+  iVar1 = DAT_ff85d02c;
+  FUN_ff8eddfc(uVar3,iVar2 + 0x100040,0x19000,
+               *(undefined4 *)(DAT_ff85d6a8 + *(int *)(DAT_ff85d02c + 0x44) * 4),&local_3c,&local_4c
+               ,uVar6);
+  iVar2 = FUN_ff8274b4(*(undefined4 *)(iVar1 + 0x14),1000);
+  if (iVar2 == 9) {
+    *(undefined4 *)(iVar1 + 0x3c) = 1;
+    FUN_ff8ee02c();
+    iVar5 = 0x90000;
+  }
+  else if (local_4c != 0) {
+    *(undefined4 *)(iVar1 + 0x3c) = 1;
+    FUN_ff8ee02c();
+    iVar5 = 0xa0000;
+  }
+  FUN_ff8ee09c();
+  FUN_ff8ee02c();
+  if (*(int *)(iVar1 + 0x44) == 2 || *(int *)(iVar1 + 0x44) == 1) {
+    *(undefined4 *)(iVar1 + 0x28) = 0;
+    sub_FF8C3BFC_RecPipelineSetup
+              (FUN_ff85d370_RecordingCallback1,DAT_ff85d6ac,FUN_ff85d28c_RecordingCallback2);
+    FUN_ff8c3d38_StartMjpegMaking_Inner(0,0,DAT_ff85d030,*(undefined4 *)(iVar1 + 0x48));
+  }
+  FUN_ff8c3fb4();
+  if (iVar5 != 0) {
+    FUN_ff879164(iVar5);
+    return;
+  }
+  FUN_ff81cb34(auStack_38,*(undefined4 *)(iVar1 + 0x7c));
+  FUN_ff81cb34(auStack_1f,&DAT_ff85d6b0);
+  if (*(short *)(iVar1 + 2) == 1) {
+    FUN_ff871c58(*(undefined4 *)(iVar1 + 0x80),0xa6);
+  }
+  FUN_ff93048c(&local_44,&local_40);
+  local_11c = local_44 + -4;
+  local_118 = local_40 + 4;
+  local_44 = local_11c;
+  local_40 = local_118;
+  local_114 = FUN_ff930f54(*DAT_ff85d028);
+  if ((local_114 == 0) || (0x20 < local_114)) {
+    switchD_ff8443f8::default(s_MovieRecorder_c_ff85d018,DAT_ff85d6b4);
+  }
+  local_4c = FUN_ff9304b4(auStack_113);
+  if ((local_4c & 1) != 0) {
+    switchD_ff8443f8::default(s_MovieRecorder_c_ff85d018,DAT_ff85d6b8);
+  }
+  FUN_ff9304c4(&local_48,&local_f3);
+  FUN_ffad1878_calledByPipeline(auStack_f2,local_48,local_f3);
+  local_4c = FUN_ff85327c(*(undefined4 *)(iVar1 + 0x7c),auStack_134);
+  if ((local_4c & 1) == 0) {
+    local_70 = FUN_ffad3d98(*(int *)(iVar1 + 0x4c) * 1000,*(undefined4 *)(iVar1 + 0x48));
+    local_68 = *DAT_ff85d038;
+    iStack_64 = DAT_ff85d038[2];
+    uStack_60 = 1;
+    local_6c = iStack_64 * local_68 * DAT_ff85d038[1];
+    local_5c = DAT_ff85d6bc;
+    local_58 = FUN_ff930538();
+    local_58 = local_58 << 3;
+    local_50 = 0xf;
+    local_54 = local_12c;
+    local_4c = FUN_ff930b20(auStack_38,local_3c,*(undefined4 *)(iVar1 + 0x80),
+                            *(undefined4 *)(iVar1 + 0x4c),&local_11c);
+    if (local_4c == 0) {
+      *(undefined4 *)(iVar1 + 0x3c) = 1;
+      FUN_ff86c13c(0xc);
+      pcVar4 = *(code **)(iVar1 + 0x8c);
+      uVar3 = *(undefined4 *)(iVar1 + 0x98);
+      goto LAB_ff85d65c;
+    }
+  }
+  *(undefined4 *)(iVar1 + 0x3c) = 1;
+  FUN_ff86c13c(0xc);
+  pcVar4 = *(code **)(iVar1 + 0x90);
+  uVar3 = *(undefined4 *)(iVar1 + 0x9c);
+LAB_ff85d65c:
+  (*pcVar4)(uVar3);
+  return;
+}
+
+
+
+

@@ -490,6 +490,51 @@ The ring buffer management structure at `*(0xFF93050C)` stores the first frame (
 2. Reimplement sub_FF85D3BC in inline assembly (like sub_FF85D98C_my for msg 6)
 3. Accept that the first IDR is lost and focus on capturing periodic IDR frames that arrive later via msg 6
 
+### Deep Analysis: IDR Never Available via Msg 6
+
+Comprehensive decompilation and analysis of the full recording pipeline confirms:
+
+**IDR lifecycle** (msg 5 — `sub_FF85D3BC`, 680 bytes):
+1. `FUN_ff930b04(base + 0x200040)` — ring buffer init
+2. `FUN_ff8eddfc(output_buf, base + 0x100040, 0x19000, ...)` — JPCORE encodes IDR frame
+3. `FUN_ff8274b4(sem, 1000)` — wait for encoding to complete (1s timeout)
+4. `sub_FF8C3BFC` + `FUN_ff8c3d38` — start recording pipeline for subsequent P-frames
+5. `FUN_ff93048c(&ptr, &size)` — read IDR from ring buffer struct (+0xD8/+0xDC)
+6. Adjust for AVCC: `ptr - 4`, `size + 4`
+7. `FUN_ff930b20(...)` — write IDR + SPS/PPS to MOV container header
+
+**Why IDR never appears in msg 6**:
+- `sub_FF92FE8C` (MovieFrameGetter) increments frame counter at +0x28 on each call
+- The ring buffer read cursor has already advanced past the IDR by the time msg 6 fires
+- Across 300+ captured frames, `frame_num=0` NEVER appears — the cycle is `fn=1,2,3,...,14,1,2,...`
+- ALL captured frames are NAL type=1 (P-frame, header 0x61), zero type=5 (IDR)
+
+**Periodic IDRs do NOT exist in the msg 6 stream**: The encoder resets frame_num to 0 every ~16 frames, but these IDRs are consumed by the ring buffer management layer (msg 5/msg 8) and never delivered through `sub_FF92FE8C`.
+
+**+0xD8/+0xDC are NOT cleared after msg 5**: The IDR pointer remains readable at `*(*(0xFF93050C) + 0xD8)` after msg 5 completes, though the underlying memory may be overwritten by subsequent frames.
+
+### STATE Machine Verification
+
+Verified that the STATE fix in `sub_FF85D98C_my` correctly handles the first msg 6:
+
+**First msg 6 trace** (STATE=2 after msg 2):
+1. Pre-check: STATE=2 ≠ 3, no promotion
+2. Callback (`BLX R0`): promotes STATE 2→3
+3. Post-check (our fix): re-read STATE=3, promote 3→4 via `STREQ R9`
+4. Accept: `CMP R0, #3` (R0 still holds 3) → equal → BNE not taken
+5. Frame processed → `sub_FF92FE8C` called → spy_ring_write delivers frame
+
+The fix works correctly — the first msg 6 frame IS processed. But it's a P-frame (fn=1), not an IDR, because the IDR was already consumed by msg 5.
+
+### NAL Type Filter Removed (diagnostic build)
+
+Removed the NAL type whitelist from `webcam.c` AVCC parser (previously rejected types other than 1,5,6,7,8). Now accepts ALL NAL types to diagnose whether any unexpected types arrive. The VCL detection still looks for type 1 (P-frame) or type 5 (IDR) to determine frame boundaries.
+
+**Viable IDR capture approaches** (ranked by feasibility):
+1. **One-shot ring buffer read at fn=1**: Read `*(*(0xFF93050C) + 0xD8) - 4` (ptr) and `+0xDC + 4` (size) from msg 6 handler on first successful frame — works if memory not yet overwritten
+2. **Inline assembly msg 5 hook**: Reimplement all 680 bytes of `sub_FF85D3BC` in asm, insert `BL spy_ring_write` after `FUN_ff93048c` — guaranteed correct but significant effort
+3. **Accept no IDR**: Rely on FFmpeg error concealment (~8s sync delay)
+
 ## Future Ideas (Not Yet Implemented)
 
 ### Raw YUV Pipeline Streaming (640x480)

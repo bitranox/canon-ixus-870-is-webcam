@@ -1424,11 +1424,10 @@ static int capture_frame_h264(void)
                 break;
             }
 
-            if (nal_type != 1 && nal_type != 5 && nal_type != 6 &&
-                nal_type != 7 && nal_type != 8) {
-                dbg_parse_result = 0x30 | nal_type;   // unexpected NAL type
-                break;
-            }
+            // Accept ALL NAL types — no filter.
+            // Previously rejected types other than 1,5,6,7,8.
+            // Removed to diagnose whether IDR frames arrive with
+            // unexpected NAL types.
 
             total = pos + 4 + nal_len;
             pos = total;
