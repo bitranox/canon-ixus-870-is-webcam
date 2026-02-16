@@ -438,7 +438,18 @@ Now the first msg 6 (IDR frame): STATE=2 → callback promotes 2→3 → post-ch
 
 **Back-pressure (tested and removed)**: A back-pressure protocol was tested (`hdr[4]` ready flag) to prevent the first frame from being overwritten during startup. While it preserved the first frame, it severely limited throughput (5 FPS vs 30 FPS) because the consumer could only process one frame per PTP round-trip. Removed in favor of the simpler overwrite protocol. If needed in the future, the implementation is documented in git history (commit 6f24641).
 
-**Status**: Built and deployed. Awaiting test with STATE fix + parser fix (no back-pressure).
+**Test result (STATE fix + parser fix, no back-pressure):**
+- Throughput restored: **30.4 FPS** (back to normal after removing back-pressure)
+- First captured frame: **fn=1** (improved from fn=4 before STATE fix)
+- **fn=0 (IDR) still never appears** — not delivered through msg 6 at all
+- All 61 decoded frames are NAL type=1 (P-frames, 0x61). Zero type=5 (IDR).
+- First frame is 48 KB, second 44 KB (larger than average 38 KB — first P-frames after IDR carry more data)
+- FFmpeg decoder syncs at frame #9 via error concealment (P-frame accumulation)
+- Camera recording confirmed active
+
+**Conclusion**: The IDR frame (fn=0) is consumed during recording initialization by **msg 5** (`sub_FF85D3BC`), which writes the MOV container header. It never reaches the per-frame msg 6 path where our spy hook lives. This is a firmware design choice — the first encoded frame goes into the MOV header, subsequent frames go through msg 6.
+
+**Next step**: Intercept msg 5 to capture the IDR frame before it's consumed by the container writer.
 
 ## Future Ideas (Not Yet Implemented)
 
