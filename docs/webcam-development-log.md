@@ -755,6 +755,61 @@ Adding a new BSS variable (`static int msg6_count`) to `movie_rec.c` caused imme
 
 **Next steps**: Investigate whether `0x000158AC` is an offset into the ring buffer (base `0x00008968`), making the absolute address `0x00008968 + 0x000158AC = 0x0001E214`. Also try reading more bytes from the IDR pointer region to look for NAL signatures.
 
+## v18.1 — Bridge Memory Probes (2026-02-16)
+
+Used PTP `CHDK_GetMemory` to read camera RAM from the PC side, avoiding camera-side code changes that crash due to BSS layout sensitivity.
+
+### Probes after M6.2 debug frame
+
+| Probe | Address | Result |
+|-------|---------|--------|
+| rb_base+0xC0 (32 bytes) | 0x8968+0xC0 | +0xC0=0x412C4720, +0xC4=0x41304720, +0xD0=0x02AD0000, +0xD8=IdrP, +0xDC=IdrS |
+| @IdrP | 0x000158AC | All zeros |
+| @(+0xD0)+IdrP | 0x02AE58AC | All 0xFF |
+| @(+0xC0)+IdrP | 0x412D9FCC | All 0xFF |
+| @uncached (+0xD0\|0x40000000)+IdrP | 0x42AE58AC | All 0xFF |
+| P-frame ptr (hdr[1]) | 0x4133xxxx | Valid P-frame data: AVCC len ~36-40KB, NAL=0x61 (type=1) |
+
+**Key findings**:
+1. **IdrP (0x158AC) is constant** across all runs — NOT a data pointer, likely a fixed struct field or offset
+2. **DMA buffer (+0xD0 = 0x02AD0000) contains 0xFF** at IdrP offset, both cached and uncached
+3. **P-frame pointers are in 0x4133xxxx range** (uncached memory), from buffers at +0xC0 (0x412C4720) and +0xC4 (0x41304720), each 256KB apart
+4. **All H.264 frames from sub_FF92FE8C are P-frames** (NAL type=1). No IDR (NAL type=5) ever appears through this path
+5. **IDR encoding happens elsewhere** — not through the msg 6 / sub_FF92FE8C path we're hooked into
+
+### BSS sensitivity confirmed
+
+Any firmware build with BSS != 14544 crashes the camera:
+- Working: text=90376, bss=14544 → stable
+- IDR injection attempt: text=90528, bss=14536 → crash
+- Debug-only variant: text=90336, bss=14536 → crash
+
+## v18.2 — ARM Memory Barrier Fix for Debug Queue (2026-02-16)
+
+**Problem**: Camera hangs requiring USB disconnect + battery pull started after the debug buffer implementation. Investigation revealed the lock-free SPSC debug queue had no ARM memory barrier between writing slot data and advancing the write index.
+
+**Root cause**: On the ARM926EJ-S (ARMv5, Digic IV), `volatile` prevents compiler reordering but does NOT prevent the CPU's hardware write buffer from reordering stores. Without a Drain Write Buffer (DWB) instruction, the consumer in webcam.c could see `hdr[8] = next_wr` (write index advanced) before the actual slot data was committed to memory, causing:
+1. Consumer reads garbage from the slot → `dbg_size` fails validation (not in 12-508 range)
+2. Consumer advances `hdr[9]` anyway → debug frame permanently lost
+3. Under certain timing, corrupted queue state could cascade into PTP/USB hangs
+
+**Fix**: Added `mcr p15, 0, r0, c7, c10, 4` (ARM Drain Write Buffer) at two points in movie_rec.c:
+1. **`spy_debug_send()`**: Before `hdr[8] = next_wr;` — ensures all slot data stores are committed before the write index update becomes visible
+2. **`spy_ring_write()`**: Before `hdr[3]++;` — ensures frame pointer and size are committed before the frame counter increment
+
+Both are code-only changes (inline asm + stack local variable). BSS stays at exactly 14544.
+
+**Build**: text=90392 (+16 bytes for inline asm), data=41928, bss=14544 (unchanged), MD5=a0954d1b09241f5499302ddf06d98d72
+
+### Test result
+
+- Camera recorded normally for the full 20 seconds
+- Both debug frames (M6.1 + M6.2) received intact
+- Debug queue indices: write_idx=2, read_idx=2 (both frames produced and consumed correctly)
+- 200+ H.264 P-frames streamed successfully
+- **Camera shut down cleanly** — no hang, no battery pull needed
+- Bridge exited cleanly after 20-second timeout
+
 ## Future Ideas (Not Yet Implemented)
 
 ### Raw YUV Pipeline Streaming (640x480)

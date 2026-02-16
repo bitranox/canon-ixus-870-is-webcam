@@ -126,6 +126,12 @@ public:
     // data: file contents
     bool upload_file(const std::string& remote_path, const std::vector<uint8_t>& data);
 
+    // Read camera memory via CHDK_GetMemory
+    // address: camera RAM address to read from
+    // size: number of bytes to read
+    // data: output buffer
+    bool read_memory(uint32_t address, uint32_t size, std::vector<uint8_t>& data);
+
     // Get last error message
     std::string get_last_error() const;
 

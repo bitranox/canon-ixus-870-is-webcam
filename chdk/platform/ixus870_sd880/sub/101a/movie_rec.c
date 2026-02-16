@@ -39,6 +39,11 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
 
     hdr[1] = (unsigned int)ptr;        // Source pointer (ring buffer address)
     hdr[2] = size;                     // Frame data size
+
+    /* ARM926EJ-S: Drain Write Buffer — ensure ptr+size are committed
+       before the frame counter becomes visible to the consumer. */
+    { int _zero = 0; asm volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(_zero) : "memory"); }
+
     hdr[3]++;                          // Frame counter (incremented LAST)
 
     sem_handle = hdr[5];
@@ -111,7 +116,13 @@ static void spy_debug_send(void)
     for (i = 0; i < dbg_build_len; i++)
         slot[4 + i] = dbg_build_buf[i];
 
-    hdr[8] = next_wr;  // Advance write index LAST (memory barrier via volatile)
+    /* ARM926EJ-S (ARMv5): Drain Write Buffer — ensures all slot data
+       stores are committed to memory before the write index update
+       becomes visible to the consumer in webcam.c. volatile alone
+       does NOT prevent hardware write buffer reordering on ARM. */
+    { int _zero = 0; asm volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(_zero) : "memory"); }
+
+    hdr[8] = next_wr;  // Advance write index LAST
 }
 
 static void __attribute__((used,noinline)) spy_msg5_debug(void)

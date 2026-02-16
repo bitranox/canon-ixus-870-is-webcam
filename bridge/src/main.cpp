@@ -342,6 +342,148 @@ int main(int argc, char* argv[]) {
         // Handle debug frames — not video, just diagnostic data
         if (mjpeg.format == ptp::FRAME_FMT_DEBUG) {
             print_debug_frame(mjpeg.data.data(), mjpeg.data.size());
+
+            // After M6.2 debug frame, probe IDR-related addresses via PTP memory read
+            if (mjpeg.data.size() >= 20 && mjpeg.data[12] == 'S' && mjpeg.data[13] == 'r') {
+                uint32_t src_val;
+                memcpy(&src_val, mjpeg.data.data() + 16, 4);
+                if (src_val == 0x4D362E32) {  // "M6.2"
+                    uint32_t idr_ptr = 0, rb_base = 0, idr_size = 0;
+                    if (mjpeg.data.size() >= 40) {
+                        memcpy(&rb_base, mjpeg.data.data() + 24, 4);   // RBas value
+                        memcpy(&idr_ptr, mjpeg.data.data() + 32, 4);   // IdrP value
+                        memcpy(&idr_size, mjpeg.data.data() + 40, 4);  // IdrS value
+                    }
+                    fprintf(stderr, "\n=== MEMORY PROBE (after M6.2) ===\n");
+                    fprintf(stderr, "  rb_base=0x%08X  IdrP=0x%08X  IdrS=%u\n", rb_base, idr_ptr, idr_size);
+
+                    // Probe 1: ring buffer struct fields +0xC0 through +0xE0
+                    if (rb_base && rb_base < 0x40000000) {
+                        std::vector<uint8_t> mem;
+                        if (client.read_memory(rb_base + 0xC0, 32, mem)) {
+                            fprintf(stderr, "  rb_base+0xC0 (32 bytes):");
+                            for (size_t i = 0; i < mem.size(); i++) {
+                                if (i % 4 == 0) fprintf(stderr, " ");
+                                fprintf(stderr, "%02X", mem[i]);
+                            }
+                            fprintf(stderr, "\n");
+                            for (int i = 0; i + 4 <= (int)mem.size(); i += 4) {
+                                uint32_t v; memcpy(&v, mem.data() + i, 4);
+                                fprintf(stderr, "    +0x%02X = 0x%08X  (%u)\n", 0xC0 + i, v, v);
+                            }
+                        } else {
+                            fprintf(stderr, "  rb_base+0xC0: read failed: %s\n", client.get_last_error().c_str());
+                        }
+                    }
+
+                    // Probe 2: data at raw IdrP address (first 32 bytes)
+                    if (idr_ptr && idr_ptr < 0x40000000) {
+                        std::vector<uint8_t> mem;
+                        if (client.read_memory(idr_ptr, 32, mem)) {
+                            fprintf(stderr, "  @IdrP 0x%08X (32 bytes):", idr_ptr);
+                            for (size_t i = 0; i < mem.size(); i++) {
+                                if (i % 4 == 0) fprintf(stderr, " ");
+                                fprintf(stderr, "%02X", mem[i]);
+                            }
+                            fprintf(stderr, "\n");
+                        } else {
+                            fprintf(stderr, "  @IdrP 0x%08X: read failed: %s\n", idr_ptr, client.get_last_error().c_str());
+                        }
+                    }
+
+                    // Probe 3: read +0xD0 value then use it as base for IdrP offset
+                    if (rb_base && rb_base < 0x40000000) {
+                        std::vector<uint8_t> d0_mem;
+                        if (client.read_memory(rb_base + 0xD0, 4, d0_mem) && d0_mem.size() >= 4) {
+                            uint32_t d0_val;
+                            memcpy(&d0_val, d0_mem.data(), 4);
+                            fprintf(stderr, "  +0xD0 = 0x%08X\n", d0_val);
+                            if (d0_val && idr_ptr) {
+                                uint32_t idr_abs = d0_val + idr_ptr;
+                                fprintf(stderr, "  @(+0xD0)+IdrP 0x%08X (32 bytes):", idr_abs);
+                                std::vector<uint8_t> mem;
+                                if (client.read_memory(idr_abs, 32, mem)) {
+                                    for (size_t i = 0; i < mem.size(); i++) {
+                                        if (i % 4 == 0) fprintf(stderr, " ");
+                                        fprintf(stderr, "%02X", mem[i]);
+                                    }
+                                    fprintf(stderr, "\n");
+                                } else {
+                                    fprintf(stderr, " read failed: %s\n", client.get_last_error().c_str());
+                                }
+                            }
+                        }
+                    }
+
+                    // Probe 4: read +0xC0 value then use it as base for IdrP offset
+                    if (rb_base && rb_base < 0x40000000) {
+                        std::vector<uint8_t> c0_mem;
+                        if (client.read_memory(rb_base + 0xC0, 4, c0_mem) && c0_mem.size() >= 4) {
+                            uint32_t c0_val;
+                            memcpy(&c0_val, c0_mem.data(), 4);
+                            fprintf(stderr, "  +0xC0 = 0x%08X\n", c0_val);
+                            if (c0_val && idr_ptr) {
+                                uint32_t idr_abs = c0_val + idr_ptr;
+                                fprintf(stderr, "  @(+0xC0)+IdrP 0x%08X (32 bytes):", idr_abs);
+                                std::vector<uint8_t> mem;
+                                if (client.read_memory(idr_abs, 32, mem)) {
+                                    for (size_t i = 0; i < mem.size(); i++) {
+                                        if (i % 4 == 0) fprintf(stderr, " ");
+                                        fprintf(stderr, "%02X", mem[i]);
+                                    }
+                                    fprintf(stderr, "\n");
+                                } else {
+                                    fprintf(stderr, " read failed: %s\n", client.get_last_error().c_str());
+                                }
+                            }
+                        }
+                    }
+                    // Probe 5: uncached version of +0xD0 base (0x40000000 | addr)
+                    if (rb_base && rb_base < 0x40000000) {
+                        std::vector<uint8_t> d0_mem;
+                        if (client.read_memory(rb_base + 0xD0, 4, d0_mem) && d0_mem.size() >= 4) {
+                            uint32_t d0_val;
+                            memcpy(&d0_val, d0_mem.data(), 4);
+                            uint32_t uncached = (d0_val | 0x40000000) + idr_ptr;
+                            fprintf(stderr, "  @uncached 0x%08X (32 bytes):", uncached);
+                            std::vector<uint8_t> mem;
+                            if (client.read_memory(uncached, 32, mem)) {
+                                for (size_t i = 0; i < mem.size(); i++) {
+                                    if (i % 4 == 0) fprintf(stderr, " ");
+                                    fprintf(stderr, "%02X", mem[i]);
+                                }
+                                fprintf(stderr, "\n");
+                            } else {
+                                fprintf(stderr, " read failed: %s\n", client.get_last_error().c_str());
+                            }
+                        }
+                    }
+
+                    // Probe 6: read first P-frame pointer from hdr[1] and show its address
+                    {
+                        std::vector<uint8_t> hdr_mem;
+                        if (client.read_memory(0x000FF004, 8, hdr_mem) && hdr_mem.size() >= 8) {
+                            uint32_t frame_ptr, frame_sz;
+                            memcpy(&frame_ptr, hdr_mem.data(), 4);
+                            memcpy(&frame_sz, hdr_mem.data() + 4, 4);
+                            fprintf(stderr, "  P-frame ptr=0x%08X size=%u\n", frame_ptr, frame_sz);
+                            if (frame_ptr && frame_ptr < 0x80000000) {
+                                std::vector<uint8_t> mem;
+                                if (client.read_memory(frame_ptr, 16, mem)) {
+                                    fprintf(stderr, "  @P-frame (16 bytes):");
+                                    for (size_t i = 0; i < mem.size(); i++) {
+                                        if (i % 4 == 0) fprintf(stderr, " ");
+                                        fprintf(stderr, "%02X", mem[i]);
+                                    }
+                                    fprintf(stderr, "\n");
+                                }
+                            }
+                        }
+                    }
+                    fprintf(stderr, "=== END MEMORY PROBE ===\n\n");
+                }
+            }
+
             continue;  // Not a video frame — don't count or decode
         }
 

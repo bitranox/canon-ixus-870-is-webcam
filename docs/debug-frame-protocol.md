@@ -58,6 +58,7 @@ The debug queue lives in the spy buffer memory region at `0x000FF000`:
 - **Queue empty**: `write_idx == read_idx`
 - **Capacity**: 3 pending debug frames (4 slots, 1 always empty per ring buffer convention)
 - **Thread safety**: Lock-free SPSC — movie_rec.c only writes `write_idx`, webcam.c only writes `read_idx`. Safe on single-core ARM.
+- **Memory barrier**: `spy_debug_send()` uses ARM Drain Write Buffer (`mcr p15,0,r0,c7,c10,4`) before advancing `write_idx` to ensure slot data is committed before the index update becomes visible. Required because `volatile` does NOT prevent hardware write buffer reordering on ARM926EJ-S (ARMv5).
 
 ## Camera-Side API (movie_rec.c)
 

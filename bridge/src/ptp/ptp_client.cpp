@@ -930,6 +930,14 @@ bool PTPClient::execute_script(const std::string& script) {
     return impl_->receive_response(resp) && resp.code == PTP_RC_OK;
 }
 
+bool PTPClient::read_memory(uint32_t address, uint32_t size, std::vector<uint8_t>& data) {
+    PTPContainer resp{};
+    if (!impl_->chdk_command(CHDK_GetMemory, address, size, 0, resp, &data)) {
+        return false;
+    }
+    return (resp.code == PTP_RC_OK && !data.empty());
+}
+
 std::string PTPClient::get_last_error() const {
     return impl_->last_error;
 }
