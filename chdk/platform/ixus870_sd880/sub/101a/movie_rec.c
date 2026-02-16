@@ -49,34 +49,106 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
 
 static int idr_sent = 0;
 
+// Msg 5 debug capture — stores ring buffer values right after IDR encoding
+static unsigned int msg5_rb_base = 0;
+static unsigned int msg5_idr_ptr = 0;
+static unsigned int msg5_idr_size = 0;
+static unsigned int msg5_count = 0;
+
+static void __attribute__((used,noinline)) spy_msg5_debug(void)
+{
+    unsigned int rb_base = *(volatile unsigned int *)0xFF93050C;
+    msg5_count++;
+    msg5_rb_base = rb_base;
+    if (rb_base != 0) {
+        msg5_idr_ptr = *(volatile unsigned int *)(rb_base + 0xD8);
+        msg5_idr_size = *(volatile unsigned int *)(rb_base + 0xDC);
+    }
+}
+
+// Debug frame buffer — sent as fake H.264 frame, bridge prints hex dump
+static unsigned char idr_debug_buf[64] __attribute__((aligned(32)));
+
 static int __attribute__((used,noinline)) spy_idr_capture(void)
 {
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
     unsigned int rb_base;
-    unsigned char *idr_ptr;
+    unsigned int idr_ptr_val;
     unsigned int idr_size;
+    unsigned int data_at_ptr;
 
     // Only active when webcam is running
     if (hdr[0] != 0x52455753) {
         idr_sent = 0;  // Reset so next webcam session gets IDR
         return 0;
     }
-    if (idr_sent) return 0;  // Already sent IDR this session
+    if (idr_sent) return 0;  // Already sent debug this session
     idr_sent = 1;
 
-    // Read ring buffer struct base from ROM pointer
+    // Read ring buffer struct values (same as before)
     rb_base = *(volatile unsigned int *)0xFF93050C;
-    if (rb_base == 0) return 0;
+    idr_ptr_val = (rb_base != 0) ? *(volatile unsigned int *)(rb_base + 0xD8) : 0;
+    idr_size = (rb_base != 0) ? *(volatile unsigned int *)(rb_base + 0xDC) : 0;
 
-    // Read IDR NAL pointer (+0xD8) and size (+0xDC)
-    idr_ptr = (unsigned char *)(*(volatile unsigned int *)(rb_base + 0xD8));
-    idr_size = *(volatile unsigned int *)(rb_base + 0xDC);
+    // Read first 4 bytes at IDR pointer (to verify if data is still IDR)
+    if (idr_ptr_val != 0 && idr_ptr_val < 0x40000000) {
+        data_at_ptr = *(volatile unsigned int *)idr_ptr_val;
+    } else {
+        data_at_ptr = 0xDEADDEAD;
+    }
 
-    if (!idr_ptr || idr_size == 0 || idr_size > 120000) return 0;
+    // Build 64-byte debug frame disguised as NAL type=1 (P-frame).
+    // webcam.c AVCC parser only passes type 1 or 5 to the bridge.
+    // Bridge decoder will FAIL on it and print hex dump — that's what we want.
+    //
+    // Layout (all uint32 in native little-endian unless noted):
+    //   [0-3]   AVCC length prefix (big-endian = 60)
+    //   [4]     NAL header 0x61 (type=1, NRI=3) — passes AVCC parser
+    //   [5]     msg5_count (low byte)
+    //   [6-7]   0xDB 0xDB marker
+    //   [8-11]  rb_base
+    //   [12-15] idr_ptr from current +0xD8
+    //   [16-19] idr_size from current +0xDC
+    //   [20-23] msg5_idr_ptr (captured during msg 5)
+    //   [24-27] msg5_idr_size (captured during msg 5)
+    //   [28-31] first 4 bytes at idr_ptr (to check if data is IDR)
+    idr_debug_buf[0] = 0x00;
+    idr_debug_buf[1] = 0x00;
+    idr_debug_buf[2] = 0x00;
+    idr_debug_buf[3] = 0x3C;  // AVCC length = 60 (big-endian)
+    idr_debug_buf[4] = 0x61;  // NAL type 1 (P-frame) — passes webcam.c filter
+    idr_debug_buf[5] = (unsigned char)(msg5_count & 0xFF);
+    idr_debug_buf[6] = 0xDB;
+    idr_debug_buf[7] = 0xDB;
 
-    // Back up 4 bytes for AVCC length prefix, add 4 to size
-    spy_ring_write(idr_ptr - 4, idr_size + 4);
-    return 1;  // IDR sent — caller should skip the P-frame
+    // Bytes 8-31: uint32 debug values in native little-endian
+    {
+        unsigned int *dbg = (unsigned int *)(idr_debug_buf + 8);
+        dbg[0] = rb_base;           // bytes 8-11:  ring buffer struct base
+        dbg[1] = idr_ptr_val;       // bytes 12-15: current +0xD8 value
+        dbg[2] = idr_size;          // bytes 16-19: current +0xDC value
+        dbg[3] = msg5_idr_ptr;      // bytes 20-23: msg5 captured +0xD8
+        dbg[4] = msg5_idr_size;     // bytes 24-27: msg5 captured +0xDC
+        dbg[5] = data_at_ptr;       // bytes 28-31: first 4 bytes at idr_ptr
+    }
+    // Bytes 32-63: extended debug
+    {
+        unsigned int *dbg2 = (unsigned int *)(idr_debug_buf + 32);
+        dbg2[0] = msg5_rb_base;     // bytes 32-35: msg5 rb_base
+        dbg2[1] = hdr[3];           // bytes 36-39: spy frame counter
+        dbg2[2] = msg5_count;       // bytes 40-43: msg5 call count (full)
+        if (idr_ptr_val != 0 && idr_ptr_val >= 4 && idr_ptr_val < 0x40000000) {
+            dbg2[3] = *(volatile unsigned int *)(idr_ptr_val - 4);
+        } else {
+            dbg2[3] = 0xDEADDEAD;
+        }
+        dbg2[4] = 0xDBDBDBDB;      // end marker
+    }
+
+    // Send debug frame — webcam.c will pass it (NAL type=1), bridge will
+    // fail to decode and print hex dump with all our debug values
+    spy_ring_write(idr_debug_buf, 64);
+    return 1;  // Skip P-frame, debug frame sent instead
 }
 
 
@@ -156,6 +228,7 @@ void __attribute__((naked,noinline)) movie_record_task(){
                  "B       loc_FF85E120\n"
  "loc_FF85E10C:\n"
                  "BL      sub_FF85D3BC\n"
+                 "BL      spy_msg5_debug\n"  // Capture +0xD8/+0xDC right after IDR encoding
                  "B       loc_FF85E120\n"
  "loc_FF85E114:\n"
                  "BL      sub_FF85D218\n"

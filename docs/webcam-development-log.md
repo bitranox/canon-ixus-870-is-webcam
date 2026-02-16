@@ -571,6 +571,39 @@ BL      spy_ring_write
 
 **Expected result**: First frame has NAL header 0x65 (IDR, type=5), decoder syncs immediately.
 
+### Test 1: IDR capture (no debug) — FAILED
+
+Two bridge runs, both showed ALL frames as NAL=0x61 (type=1, P-frames). No IDR (0x65) ever appeared. `spy_idr_capture()` silently returned 0 on every call — either a safety check failed or the ring buffer fields were invalid. No way to tell which check failed without debug output.
+
+### Test 2: Debug frame with NAL type 9 — INVISIBLE
+
+Added `spy_msg5_debug()` called after `sub_FF85D3BC` in `movie_record_task()` to capture +0xD8/+0xDC values at the moment msg 5 completes (when IDR is definitely valid). Modified `spy_idr_capture()` to always send a 64-byte debug frame with NAL type 9 (AUD) containing:
+- rb_base, idr_ptr, idr_size (current values from msg 6 time)
+- msg5_idr_ptr, msg5_idr_size (values captured during msg 5)
+- First 4 bytes at idr_ptr (to verify if data is still IDR)
+
+**Result**: Debug frame never appeared in bridge output. All frames were normal ~40KB P-frames.
+
+**Root cause found**: webcam.c's AVCC parser at `capture_frame_h264()` only accepts NAL types 1 (P-frame) or 5 (IDR). NAL type 9 (AUD) was silently discarded — `have_vcl` stayed 0, function returned 0. The debug frame WAS being sent via `spy_ring_write`, but webcam.c filtered it out before it reached the bridge.
+
+### Test 3: Debug frame with NAL type 1 — PENDING
+
+Fixed debug frame to use NAL header 0x61 (type=1, NRI=3) so it passes webcam.c's AVCC parser. The bridge H.264 decoder will fail on the 64-byte garbage payload and print a hex dump containing all debug values (rb_base, idr_ptr, idr_size, msg5 values, data at idr_ptr).
+
+**Debug frame layout** (64 bytes, first 32 visible in bridge hex dump):
+| Bytes | Content | Endian |
+|-------|---------|--------|
+| 0-3 | AVCC length = 60 | big-endian |
+| 4 | NAL header 0x61 (type=1) | — |
+| 5 | msg5_count (low byte) | — |
+| 6-7 | 0xDB 0xDB marker | — |
+| 8-11 | rb_base | little-endian |
+| 12-15 | idr_ptr (current +0xD8) | little-endian |
+| 16-19 | idr_size (current +0xDC) | little-endian |
+| 20-23 | msg5_idr_ptr | little-endian |
+| 24-27 | msg5_idr_size | little-endian |
+| 28-31 | first 4 bytes at idr_ptr | little-endian |
+
 **Status**: Deployed to SD card, awaiting bridge test.
 
 ## Future Ideas (Not Yet Implemented)
