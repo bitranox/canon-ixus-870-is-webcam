@@ -1,10 +1,51 @@
 #include "conf.h"
 
+// Firmware stubs used by spy_ring_write
+extern void *_memcpy(void *dest, const void *src, long n);
+extern void _GiveSemaphore(int sem);
+
 void change_video_tables(__attribute__ ((unused))int a, __attribute__ ((unused))int b) {}
 
 
 void  set_quality(int *x){ // -17 highest; +12 lowest
  if (conf.video_mode) *x=12-((conf.video_quality-1)*(12+17)/(99-1));
+}
+
+
+// Copy H.264 frame data to webcam module's buffer and signal semaphore.
+// Called from sub_FF85D98C_my after sub_FF92FE8C returns encoded frame.
+//
+// Shared memory protocol at 0x000FF000 (initialized by webcam.c):
+//   [0] magic    = 0x52455753 when active (set by webcam.c)
+//   [1] data_ptr = frame buffer (malloc'd by webcam.c)
+//   [2] size     = actual bytes copied (written here)
+//   [3] count    = frame counter (written LAST, here)
+//   [4] max_size = buffer capacity (set by webcam.c)
+//   [5] sem      = semaphore handle (set by webcam.c)
+static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, unsigned int size)
+{
+    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
+    unsigned char *dst;
+    unsigned int copy_size, sem_handle;
+
+    if (hdr[0] != 0x52455753) return;  // Not initialized by webcam.c
+
+    dst = (unsigned char *)hdr[1];
+    if (dst == 0) return;
+
+    copy_size = hdr[4];                // Max buffer size
+    if (copy_size == 0) return;
+    if (size < copy_size) copy_size = size;
+
+    _memcpy(dst, ptr, copy_size);
+
+    hdr[2] = copy_size;                // Actual frame size
+    hdr[3]++;                          // Frame counter (incremented LAST)
+
+    sem_handle = hdr[5];
+    if (sem_handle != 0) {
+        _GiveSemaphore(sem_handle);
+    }
 }
 
 
@@ -146,6 +187,14 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "BL      sub_FF92FE8C\n"
                  "MOVS    R8, R0\n"
                  "BNE     loc_FF85DA40\n"
+
+                // Spy ring write: copy frame data to webcam module's buffer
+                // and signal semaphore for synchronous delivery.
+                // spy_ring_write(ptr, size) preserves R4-R11 (AAPCS).
+                "LDR     R0, [SP, #0x34]\n"    // R0 = jpeg_ptr from sub_FF92FE8C
+                "LDR     R1, [SP, #0x30]\n"    // R1 = jpeg_size
+                "BL      spy_ring_write\n"     // Copy data + signal semaphore
+
  "loc_FF85DA24:\n"
                  "LDR     R0, [R6,#0x2C]\n"
                  "CMP     R0, #1\n"

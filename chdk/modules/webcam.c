@@ -31,6 +31,7 @@
 #include "tje.h"
 #include "shutdown.h"
 #include "keyboard.h"
+#include "semaphore.h"
 
 // Maximum JPEG output buffer size (software fallback path).
 #define JPEG_BUF_SIZE       (256 * 1024)
@@ -143,6 +144,11 @@ static int recording_active = 0;           // 1 if we started video recording fo
 static int webcam_stop(void);              // forward declaration for use in webcam_start
 static unsigned int last_spy_cnt = 0;      // spy[3] frame count at last H.264 capture (stale detection)
 static unsigned int avi_sem_handle = 0;    // AVI write semaphore handle (from movtask[+0x14])
+
+// Spy buffer: frame data area (H.264 data copied by movie_rec.c's spy_ring_write)
+static unsigned char *frame_data_buf = NULL;
+static int frame_sem = 0;                  // DryOS binary semaphore for frame signaling
+#define SPY_BUF_SIZE 65536                 // 64 KB — enough for any H.264 frame
 
 // Note: SPS/PPS for H.264 decoding is hardcoded in the PC bridge's FFmpeg
 // decoder (extracted from the camera's MOV avcC atom). The spy buffer never
@@ -311,20 +317,16 @@ static unsigned int hw_fail_total = 0;     // Total failed attempts
 // 252-255: (reserved)
 // ============================================================
 // Spy buffer: shared with movie_rec.c frame interceptor
-// movie_rec.c writes JPEG ptr/size here during real recording.
+// webcam.c initializes the header; movie_rec.c's spy_ring_write
+// copies frame data into the buffer and signals the semaphore.
 // ============================================================
 #define WEBCAM_SPY_ADDR    ((volatile unsigned int *)0x000FF000)
-// spy[0] = magic (0x52455753 after first frame)
-// spy[1] = jpeg_ptr
-// spy[2] = jpeg_size
-// spy[3] = frame_count
-// spy[4] = init_flag (0xCAFE0001 after movie_record_task init case)
-// spy[5] = last error code from sub_FF92FE8C
-// spy[6] = error count
-// spy[7] = metadata1 [SP+0x2C]
-// spy[8] = metadata2 [SP+0x28]
-// spy[9] = task_state at frame time
-// spy[10] = task callback at frame time
+// spy[0] = magic (0x52455753 = active, set by webcam.c)
+// spy[1] = data_ptr (frame buffer, malloc'd by webcam.c)
+// spy[2] = frame_size (actual bytes copied, set by movie_rec.c)
+// spy[3] = frame_cnt (monotonic counter, set by movie_rec.c LAST)
+// spy[4] = max_size (buffer capacity, set by webcam.c)
+// spy[5] = sem_handle (DryOS semaphore, set by webcam.c)
 
 // Ring buffer base: DAT_ff93050c (ROM literal → RAM address)
 // Used by sub_FF92FE8C (MovieFrameGetter) during recording
@@ -1259,131 +1261,115 @@ static int capture_frame_hwjpeg(void)
 // H.264 frame capture from recording spy buffer (Option D)
 // ============================================================
 
-// Capture an H.264 encoded frame from the movie_rec.c spy buffer.
-// During active recording, movie_rec.c (sub_FF85D98C_my) calls
-// sub_FF92FE8C to get encoded frames and writes the pointer/size
-// to the spy buffer at RAM 0xFF000 with magic "SREW" (0x52455753).
+// Capture an H.264 encoded frame via semaphore-based delivery.
+// movie_rec.c's spy_ring_write() copies frame data to frame_data_buf
+// and signals frame_sem on every encoded frame.  We block on the
+// semaphore (max 100ms) for synchronized delivery — no polling.
 //
-// The data is H.264 NAL units (not JPEG despite the variable name
-// "jpeg_ptr" in movie_rec.c — the names are inherited from the
-// Digic III era when cameras used MJPEG, but the IXUS 870 IS
-// uses H.264 encoding in MOV container).
+// The data is H.264 NAL units in AVCC format (4-byte big-endian
+// length prefix, as used in MOV containers).
 //
 // Returns frame size on success, 0 if no frame available.
-// Non-blocking: checks spy buffer once and returns immediately.
-// The bridge retries after 33ms sleep on the PC side.
 static int capture_frame_h264(void)
 {
-    volatile unsigned int *spy = WEBCAM_SPY_ADDR;
-    unsigned int spy_magic, spy_ptr, spy_size, spy_cnt;
+    volatile unsigned int *hdr = WEBCAM_SPY_ADDR;
+    unsigned int size;
+    int sem_ret;
 
-    if (!recording_active) return 0;
+    // ---- Populate diagnostics for bridge visibility ----
+    // hw_mjpeg_get_frame diagnostics are never called during recording,
+    // so we must fill hw_diag here for the bridge to display.
+    {
+        #define D32(off, v) do { \
+            hw_diag[(off)]   = (v);       hw_diag[(off)+1] = (v)>>8; \
+            hw_diag[(off)+2] = (v)>>16;   hw_diag[(off)+3] = (v)>>24; \
+        } while(0)
 
-    // Keep the recording pipeline alive by signaling the AVI write
-    // completion semaphore. sub_FF85D98C_my calls TakeSemaphore with
-    // a 1-second timeout after each AVI frame write. If the write
-    // never completes (PTP mode blocks file I/O), the timeout kills
-    // the recording. Our GiveSemaphore makes TakeSemaphore return
-    // immediately, preventing the timeout.
-    if (avi_sem_handle != 0) {
-        unsigned int sem_args[1] = { avi_sem_handle };
-        call_func_ptr(FW_GiveSemaphore, sem_args, 1);
+        volatile unsigned int *movtask = (volatile unsigned int *)0x000051A8;
+
+        // Block 0 (0-63): H.264 capture state
+        D32( 0, 0x48323634);            // marker "H264" so bridge knows this is H.264 diag
+        D32( 4, recording_active);
+        D32( 8, (unsigned int)frame_data_buf);
+        D32(12, (unsigned int)frame_sem);
+        D32(16, avi_sem_handle);
+        D32(20, *(volatile unsigned int *)0x000051E4); // movie_status NOW
+        D32(24, movtask[0x3C/4]);       // movie task STATE
+        D32(28, movtask[0x50/4]);       // movie task frame counter
+        // Recording start diagnostics from webcam_start
+        D32(32, hdr[11]);              // rec_ret
+        D32(36, hdr[12]);              // movie_status @ 0ms
+        D32(40, hdr[13]);              // movie_status after retry loop
+        D32(44, hdr[14]);              // retry count (0-49, 50=timed out)
+        D32(48, avi_sem_handle);       // AVI write semaphore handle
+        // Current camera state
+        D32(52, camera_info.state.mode_video);  // mode_video flag
+        D32(56, camera_info.state.mode_play);   // mode_play flag
+        D32(60, camera_info.state.mode_rec);    // mode_rec flag
+
+        #undef D32
+        hw_diag_len = HW_DIAG_SIZE;
     }
 
-    spy_magic = spy[0];
-    spy_ptr = spy[1];
-    spy_size = spy[2];
-    spy_cnt = spy[3];
+    if (!recording_active || !frame_data_buf || !frame_sem) return 0;
+    if (hdr[0] != 0x52455753) return 0;
 
-    // Validate spy buffer
-    if (spy_magic != 0x52455753) return 0;  // "SREW" magic
-    if (spy_ptr == 0 || spy_size == 0) return 0;
-    if (spy_size > JPEG_BUF_SIZE) return 0;
-    if (spy_cnt == last_spy_cnt) return 0;  // Same frame as last time
+    // Block until movie_rec.c signals a new frame (max 100ms).
+    // spy_ring_write() does memcpy + GiveSemaphore(frame_sem).
+    sem_ret = TakeSemaphore(frame_sem, 100);
+    if (sem_ret != 0) return 0;  // Timeout — no frame available
 
-    last_spy_cnt = spy_cnt;
+    // Frame data is already in frame_data_buf (copied by spy_ring_write).
+    size = hdr[2];  // Actual bytes copied
+    if (size == 0 || size > SPY_BUF_SIZE) return 0;
 
+    // Parse AVCC NAL units to determine actual H.264 frame size.
+    // spy_ring_write copies min(ring_chunk_size, 64KB).  The actual
+    // encoded frame (~5-40 KB) is a prefix of that data.
+    //
+    // AVCC format: [4-byte big-endian length][NAL data] per NAL unit.
+    // Canon Baseline profile: one slice NAL per frame (type 1 or 5),
+    // optionally preceded by SEI (type 6).
     {
-        volatile unsigned char *p = (volatile unsigned char *)spy_ptr;
-        unsigned int fi;
-        unsigned int actual_size = spy_size;
+        unsigned char *p = frame_data_buf;
+        unsigned int pos = 0;
+        unsigned int total = 0;
+        int nal_count = 0;
+        int have_vcl = 0;
 
-        // Determine actual frame size from AVCC length prefix.
-        // Canon's recording pipeline outputs H.264 in AVCC format
-        // (4-byte big-endian NAL length prefix, as used in MOV containers).
-        // spy[2] reports the ring buffer chunk size (~256 KB), not the
-        // actual encoded frame size (~30-100 KB).
-        //
-        // Parse AVCC NAL units: each is [4-byte length][NAL data].
-        // Canon Baseline profile produces ONE slice NAL per frame:
-        //   P-frame: [len][type 1 slice]
-        //   IDR:     [len][type 6 SEI] + [len][type 5 slice]  (sometimes)
-        //
-        // CRITICAL: Stop after the first VCL NAL (type 1 or 5). The ring
-        // buffer contains consecutive frames, and the next frame's AVCC
-        // header can look like a valid continuation, causing false chaining.
-        {
-            unsigned int pos = 0;
-            unsigned int total = 0;
-            int nal_count = 0;
-            int have_vcl = 0;  // found a VCL (slice) NAL — frame is complete
+        while (pos + 5 <= size && nal_count < 4) {
+            unsigned int nal_len = ((unsigned int)p[pos] << 24) |
+                                  ((unsigned int)p[pos+1] << 16) |
+                                  ((unsigned int)p[pos+2] << 8) |
+                                  (unsigned int)p[pos+3];
+            unsigned int nal_type;
 
-            while (pos + 5 <= spy_size && nal_count < 4) {
-                unsigned int nal_len = ((unsigned int)p[pos] << 24) |
-                                      ((unsigned int)p[pos+1] << 16) |
-                                      ((unsigned int)p[pos+2] << 8) |
-                                      (unsigned int)p[pos+3];
-                unsigned int nal_type;
+            if (nal_len < 2 || nal_len > 120000) break;
 
-                // Validate NAL length: must be reasonable (2 <= len <= 120KB)
-                if (nal_len < 2 || nal_len > 120000) break;
+            nal_type = p[pos + 4] & 0x1F;
+            if (p[pos + 4] & 0x80) break;  // forbidden_zero_bit
 
-                // Validate NAL header byte
-                nal_type = p[pos + 4] & 0x1F;
-                if (p[pos + 4] & 0x80) break;  // forbidden_zero_bit must be 0
+            if (nal_type != 1 && nal_type != 5 && nal_type != 6) break;
 
-                // Only accept types from Canon's encoder:
-                // 1=non-IDR slice (P-frame), 5=IDR slice (keyframe), 6=SEI
-                if (nal_type != 1 && nal_type != 5 && nal_type != 6) break;
+            total = pos + 4 + nal_len;
+            pos = total;
+            nal_count++;
 
-                total = pos + 4 + nal_len;
-                pos = total;
-                nal_count++;
-
-                // Once we have a VCL NAL (slice), the frame is complete.
-                // Do NOT continue — the next bytes are a different frame.
-                if (nal_type == 1 || nal_type == 5) {
-                    have_vcl = 1;
-                    break;
-                }
-            }
-
-            if (have_vcl && total > 0 && total <= spy_size) {
-                actual_size = total;
-            } else {
-                return 0;  // Reject frame — AVCC parser couldn't determine size
+            if (nal_type == 1 || nal_type == 5) {
+                have_vcl = 1;
+                break;
             }
         }
 
-        // Allocate copy buffer if needed
-        if (!jpeg_buf[0]) {
-            jpeg_buf[0] = malloc(JPEG_BUF_SIZE);
-            if (!jpeg_buf[0]) return 0;
-        }
+        if (!have_vcl || total == 0 || total > size) return 0;
 
-        // Copy only the actual frame data (not the full ring buffer chunk)
-        if (actual_size > JPEG_BUF_SIZE)
-            actual_size = JPEG_BUF_SIZE;
-        for (fi = 0; fi < actual_size; fi++)
-            jpeg_buf[0][fi] = p[fi];
-
-        hw_jpeg_data = jpeg_buf[0];
-        hw_jpeg_size = actual_size;
+        hw_jpeg_data = frame_data_buf;
+        hw_jpeg_size = total;
         frame_width = 640;
         frame_height = 480;
         frame_format = WEBCAM_FMT_H264;
 
-        return (int)spy_size;
+        return (int)total;
     }
 }
 
@@ -1532,124 +1518,68 @@ static int webcam_start(int jpeg_quality)
     // conflicts with the recording pipeline's own JPCORE setup and causes
     // the spy buffer to stop updating after 1-2 frames.
 
-    // Start video recording via the firmware's CtrlSrv event system to
-    // activate the full movie_record_task pipeline. This triggers
-    // sub_FF85D98C_my which calls sub_FF92FE8C to get encoded frames
-    // and writes them to the spy buffer at 0xFF000.
-    //
-    // UIFS_StartMovieRecord_FW posts event 0x9A1 to the control server
-    // queue. The actual pipeline init happens asynchronously.
+    // Allocate spy buffer data area and create frame delivery semaphore.
+    // movie_rec.c's spy_ring_write will memcpy frame data here and signal
+    // the semaphore, so capture_frame_h264 can block instead of polling.
+    if (!frame_data_buf) {
+        frame_data_buf = malloc(SPY_BUF_SIZE);
+    }
+    if (frame_data_buf && !frame_sem) {
+        frame_sem = CreateBinarySemaphore("WebcamFrame", 0);
+    }
+
+    // Initialize shared spy buffer header (must be done BEFORE starting
+    // recording so spy_ring_write sees valid state from the first frame).
     {
+        volatile unsigned int *spy = WEBCAM_SPY_ADDR;
+        int si;
+        for (si = 0; si < 16; si++) spy[si] = 0;   // Clear all
+        spy[1] = (unsigned int)frame_data_buf;       // Data buffer pointer
+        spy[4] = SPY_BUF_SIZE;                       // Max buffer size
+        spy[5] = (unsigned int)frame_sem;             // Semaphore handle
+        spy[0] = 0x52455753;                          // Magic (enable LAST)
+    }
+
+    // Start video recording via the firmware's CtrlSrv event system.
+    // UIFS_StartMovieRecord posts event 0x9A1 — CtrlSrv processes it
+    // asynchronously. We must WAIT for movie_status to reach 4 (recording).
+    {
+        int rec_retries;
+        unsigned int rec_args[1] = { 0 };  // NULL callback = use default
+        unsigned int rec_ret;
+
+        rec_ret = call_func_ptr(FW_UIFS_StartMovieRecord, rec_args, 1);
+
         {
-            int rec_retries;
-            unsigned int rec_args[1] = { 0 };  // NULL callback = use default
-            unsigned int rec_ret;
+            volatile unsigned int *spy = WEBCAM_SPY_ADDR;
+            spy[11] = rec_ret;
+            spy[12] = get_movie_status();  // immediately after call
+        }
 
-            rec_ret = call_func_ptr(FW_UIFS_StartMovieRecord, rec_args, 1);
+        if (rec_ret == 0) {
+            // Wait up to 5 seconds for CtrlSrv to start recording
+            for (rec_retries = 0; rec_retries < 50; rec_retries++) {
+                msleep(100);
+                if (get_movie_status() == VIDEO_RECORD_IN_PROGRESS) {
+                    recording_active = 1;
+                    break;
+                }
+            }
 
-            // Store return value in spy buffer for diagnostics
+            // Store retry count and final movie_status for diagnostics
             {
                 volatile unsigned int *spy = WEBCAM_SPY_ADDR;
-                spy[11] = rec_ret;           // UIFS_StartMovieRecord return
-                spy[12] = get_movie_status(); // movie_status right after call
+                spy[13] = get_movie_status();
+                spy[14] = (unsigned int)rec_retries;
             }
 
-            if (rec_ret == 0) {
-                // Event posted successfully — wait for CtrlSrv to process
-                for (rec_retries = 0; rec_retries < 50; rec_retries++) {
-                    msleep(100);
-                    if (get_movie_status() == VIDEO_RECORD_IN_PROGRESS) {
-                        recording_active = 1;
-                        break;
-                    }
-                }
-
-                // Let first few frames settle before capturing
-                if (recording_active) {
-                    msleep(200);
-
-                    // ============================================================
-                    // AVI WRITE SEMAPHORE KEEPALIVE
-                    //
-                    // The recording pipeline (sub_FF85D98C_my) calls sub_FF8EDBE0
-                    // to write each H.264 frame to a MOV file, then waits on a
-                    // semaphore (TakeSemaphore, 1s timeout) for write completion.
-                    // In PTP/USB mode the file I/O may stall or fail, causing the
-                    // semaphore to timeout and the pipeline to stop after 2 frames.
-                    //
-                    // Fix: Pre-signal the semaphore with GiveSemaphore so that
-                    // TakeSemaphore returns immediately. The initial burst of 100
-                    // signals provides ~3 seconds of runway at 30fps. After that,
-                    // capture_frame_h264() signals once per PTP request (~33ms),
-                    // keeping the pipeline alive indefinitely.
-                    // ============================================================
-                    {
-                        volatile unsigned int *movtask = (volatile unsigned int *)0x000051A8;
-                        unsigned int raw_handle = movtask[0x14/4];  // semaphore at offset 0x14
-                        // Validate: must be in RAM range and not 0xFFFFFFFF.
-                        // DryOS semaphore handles are small integers or RAM pointers.
-                        // Garbage values (0xFFFFFFFF) would crash GiveSemaphore.
-                        if (raw_handle != 0 && raw_handle != 0xFFFFFFFF && raw_handle < 0x10000000) {
-                            avi_sem_handle = raw_handle;
-                        } else {
-                            avi_sem_handle = 0;
-                        }
-                    }
-                    // Write handle to spy buffer for diagnostics
-                    {
-                        volatile unsigned int *spy = WEBCAM_SPY_ADDR;
-                        spy[15] = avi_sem_handle;
-                    }
-                    if (avi_sem_handle != 0) {
-                        int s;
-                        for (s = 0; s < 100; s++) {
-                            unsigned int sem_args[1] = { avi_sem_handle };
-                            call_func_ptr(FW_GiveSemaphore, sem_args, 1);
-                        }
-                    }
-                }
-
-                // Store final movie_status for diagnostics
-                {
-                    volatile unsigned int *spy = WEBCAM_SPY_ADDR;
-                    spy[13] = get_movie_status();
-                    spy[14] = (unsigned int)rec_retries;
-                    spy[15] = 0;
-                }
-            }
-
-            // Append recording start results to hw_diag buffer
-            // (offsets 256-287 — after hw_mjpeg_start diagnostics)
-            {
-                #define DIAG_U32_REC(off, v) do { \
-                    hw_diag[(off)]   = (v);       hw_diag[(off)+1] = (v)>>8; \
-                    hw_diag[(off)+2] = (v)>>16;   hw_diag[(off)+3] = (v)>>24; \
-                } while(0)
-
-                DIAG_U32_REC(256, 0xD0D0D0D0);         // marker
-                DIAG_U32_REC(260, rec_ret);              // UIFS_StartMovieRecord return
-                DIAG_U32_REC(264, get_movie_status());   // movie_status after wait
-                DIAG_U32_REC(268, recording_active);     // did recording start?
-                DIAG_U32_REC(272, *(volatile unsigned int *)0x000051E4); // raw movie_status
-                {
-                    // Check precondition state at DAT_ff8834f0
-                    unsigned int dat_ptr = *(volatile unsigned int *)0xFF8834F0;
-                    if (dat_ptr >= 0x00001000 && dat_ptr < 0x04000000) {
-                        volatile unsigned int *ds = (volatile unsigned int *)dat_ptr;
-                        DIAG_U32_REC(276, ds[2]);  // +8: must be non-zero
-                        DIAG_U32_REC(280, ds[4]);  // +0x10: must be zero
-                    } else {
-                        DIAG_U32_REC(276, dat_ptr);
-                        DIAG_U32_REC(280, 0xDEADDEAD);
-                    }
-                }
-                DIAG_U32_REC(284, 0xD0D0D0D0);         // end marker
-
-                #undef DIAG_U32_REC
-            }
-
-            hw_diag_len = HW_DIAG_SIZE;
+            // No GiveSemaphore needed — with stock movie_rec.c, the AVI
+            // writer completes normally and signals its own semaphore.
+            // The value at movtask[+0x14] is NOT a valid DryOS semaphore
+            // handle; calling GiveSemaphore on it crashes the camera.
         }
+
+        hw_diag_len = HW_DIAG_SIZE;
     }
 
     // Allocate JPEG double-buffers (needed for software fallback path
@@ -1694,6 +1624,14 @@ static int webcam_stop(void)
     // Re-enable auto-power-off (disabled in webcam_start)
     enable_shutdown();
 
+    // Disable spy buffer first — movie_rec.c's spy_ring_write returns
+    // early when magic is cleared, preventing writes during shutdown.
+    {
+        volatile unsigned int *spy = WEBCAM_SPY_ADDR;
+        spy[0] = 0;
+    }
+    msleep(50);  // Let any in-progress spy_ring_write complete
+
     // Stop recording if we started it (Option D)
     if (recording_active) {
         int stop_retries;
@@ -1714,6 +1652,16 @@ static int webcam_stop(void)
     last_cb_count_hwjpeg = 0;
     last_spy_cnt = 0;
     avi_sem_handle = 0;
+
+    // Clean up spy buffer resources (semaphore + data buffer)
+    if (frame_sem) {
+        DeleteSemaphore(frame_sem);
+        frame_sem = 0;
+    }
+    if (frame_data_buf) {
+        free(frame_data_buf);
+        frame_data_buf = NULL;
+    }
 
     // Free raw UYVY buffer
     if (uyvy_buf) {

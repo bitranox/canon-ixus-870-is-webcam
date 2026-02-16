@@ -1118,13 +1118,18 @@ Added `tje_encode_uyvy()` to the TJE encoder to handle the UYVY (YUV422) format 
 - PC bridge receives and decodes them via FFmpeg (confirmed up to 22 consecutive frames in one session)
 - `capture_frame_h264()` reads spy buffer non-blocking (check once, return immediately)
 
-**Current working state (2026-02-15)**: Recording works with **completely stock movie_rec.c** (no spy buffer hooks, no AVI NOP patches, no skip-all-AVI branches). The only CHDK modifications in movie_rec.c are `unlock_optical_zoom` and `set_quality` — standard CHDK additions present in all camera ports.
+**Current state (2026-02-16)**: `spy_ring_write()` re-added to movie_rec.c — copies frame data to webcam module's buffer and signals semaphore for synchronous delivery. Recording starts via `UIFS_StartMovieRecord` with a retry loop waiting for `movie_status == VIDEO_RECORD_IN_PROGRESS`. NOT YET TESTED with the complete solution (spy_ring_write + semaphore delivery).
 
-**Recording start method**: `UIFS_StartMovieRecord` (0xFF883D50) with fire-and-forget pattern — call and return PTP response immediately without waiting for movie_status or doing GiveSemaphore. Recording starts asynchronously. The camera records actual MOV files to the SD card.
+**Recording start method**: `UIFS_StartMovieRecord` (0xFF883D50) posts event 0x9A1 to CtrlSrv which processes it asynchronously. **Takes ~1 second** to reach movie_status=4 (VIDEO_RECORD_IN_PROGRESS). A retry loop (up to 50 × 100ms = 5 seconds) is required — the old "fire-and-forget" pattern with only 200ms wait was insufficient and left movie_status at 0.
 
-**Key discovery**: The recording pipeline dying after ~1 second was caused by the spy buffer patches in movie_rec.c, NOT by external factors. With stock movie_rec.c, recording stays alive normally. The previous NOP/skip-all-AVI approaches were unnecessary — they were trying to fix a problem created by the spy buffer patches themselves.
+**Key discoveries (2026-02-16)**:
+1. **Recording needs ~1 second to start**: UIFS_StartMovieRecord returns 0 immediately, but movie_status reaches 4 only after ~10 retries (1 second). Without the retry loop, the webcam module sees movie_status=0 and never activates frame capture.
+2. **movtask[+0x14] (0x51BC) is NOT a valid DryOS semaphore handle**: The value at this address (~0x04EDBxxx / ~0x04F4xxxx) is NOT a semaphore. Calling GiveSemaphore on it crashes the camera within 9 frames. **DO NOT call GiveSemaphore on this value.**
+3. **AVI writer signals its own semaphore**: With stock recording flow (no NOP patches), the AVI writer completes normally and signals its own completion semaphore. No external GiveSemaphore keepalive is needed.
+4. **spy_ring_write runs safely before AVI write**: The BL call is placed after sub_FF92FE8C returns the frame but before the AVI write path. ARM AAPCS guarantees R4-R11 are preserved across the BL. The memcpy (~320us for 64KB on ARM926) + GiveSemaphore (~1us) complete well within the frame period.
+5. **Previous recording deaths were caused by spy buffer patches themselves**: With completely stock movie_rec.c, recording stays alive indefinitely. The NOP/skip-all-AVI approaches were trying to fix a problem created by the old spy buffer hooks.
 
-**Previous failed approach — NOP AVI write + TakeSemaphore**: All 3 `sub_FF8EDBE0` (AVI write) calls and all 3 `sub_FF8274B4` (TakeSemaphore) calls were NOPped. Recording still died because the spy buffer hooks disrupted the pipeline flow. This approach has been abandoned in favor of stock movie_rec.c.
+**Previous failed approach — NOP AVI write + TakeSemaphore**: All 3 `sub_FF8EDBE0` (AVI write) calls and all 3 `sub_FF8274B4` (TakeSemaphore) calls were NOPped. Recording still died because the spy buffer hooks disrupted the pipeline flow. This approach has been abandoned.
 
 **Failed approaches to keep recording alive**:
 
@@ -1134,6 +1139,7 @@ Added `tje_encode_uyvy()` to the TJE encoder to handle the UYVY (YUV422) format 
 | Increased bridge polling interval (33ms sleep) | 5 frames, still stops |
 | GiveSemaphore keepalive (100 pre-signals) | Inconsistent: 20+ frames in one session, ~1s in others |
 | GiveSemaphore keepalive (10 pre-signals) | Recording dies immediately (not enough runway) |
+| GiveSemaphore on movtask[+0x14] (0x51BC) | **Camera crashes after 9 frames** — NOT a valid semaphore handle |
 | Re-enable `hw_mjpeg_start()` before recording | Recording dies after ~1s (conflicts with pipeline JPCORE setup) |
 | Force AVI write success (call sub_FF8EDBE0 then MOV R0,#0 + STR R0,[SP,#0x38]) | Camera still shuts off — sub_FF8EDBE0 itself may block/stall |
 | Force TakeSemaphore success (call sub_FF8274B4 then MOV R0,#0 before CMP R0,#9) | Combined with above, still dies — blocking I/O not eliminated |
@@ -1144,16 +1150,35 @@ Added `tje_encode_uyvy()` to the TJE encoder to handle the UYVY (YUV422) format 
 | NOP AVI write + TakeSemaphore (3 sites) | Shows 23'06'' and stops immediately (AVI bookkeeping without preceding write) |
 | Skip ALL AVI code (`B loc_FF85DB10` after spy) | Shows 0'' and stops immediately (no frame counter progress) |
 | `kbd_key_press(KEY_SHOOT_FULL)` | Doesn't start recording in video mode via PTP |
-| **Stock movie_rec.c (no spy buffer)** | **WORKS — recording stays alive** |
+| Fire-and-forget (200ms wait, no retry) | movie_status=0 — UIFS_StartMovieRecord needs ~1s to complete |
+| **Stock movie_rec.c + retry loop (no GiveSemaphore)** | **WORKS — recording stays alive for full 30s test** |
 
 **Important operational notes**:
 - **`hw_mjpeg_start()` must NOT be called before recording**: It conflicts with the recording pipeline's own JPCORE setup and causes frames to stop after 1-2 seconds. The committed version correctly skips it.
-- **movie_rec.c is STOCK**: All spy buffer hooks, AVI NOP patches, and skip-all-AVI branches have been removed. Only standard CHDK modifications remain (`unlock_optical_zoom`, `set_quality`). The recording pipeline runs completely unmodified.
-- **UIFS_StartMovieRecord fire-and-forget**: The PTP response is sent immediately after calling UIFS_StartMovieRecord. No waiting for movie_status, no GiveSemaphore. Recording starts asynchronously. This prevents the recording pipeline from interfering with USB.
+- **movie_rec.c has spy_ring_write()**: Copies frame data + signals semaphore BEFORE the AVI write path. All standard AVI write + TakeSemaphore calls remain intact.
+- **UIFS_StartMovieRecord + retry loop**: Call returns immediately, then wait up to 5 seconds (50 × 100ms) for movie_status to reach VIDEO_RECORD_IN_PROGRESS (~10 retries = 1 second typical).
+- **No GiveSemaphore on AVI handle**: movtask[+0x14] is NOT a valid semaphore. The AVI writer signals its own semaphore.
+
+**Spy buffer protocol (v2 — data-copying + semaphore)**:
+
+The original spy buffer only stored a POINTER to Canon's H.264 ring buffer. The v2 protocol copies actual frame data and uses a semaphore for synchronization:
+
+| Offset | Field | Writer | Description |
+|--------|-------|--------|-------------|
+| hdr[0] | magic | webcam.c | `0x52455753` = active, `0` = disabled |
+| hdr[1] | data_ptr | webcam.c | Pointer to malloc'd frame buffer (64KB) |
+| hdr[2] | frame_size | movie_rec.c | Actual bytes copied by spy_ring_write |
+| hdr[3] | frame_cnt | movie_rec.c | Monotonic counter (written LAST) |
+| hdr[4] | max_size | webcam.c | Buffer capacity (65536) |
+| hdr[5] | sem_handle | webcam.c | DryOS binary semaphore for signaling |
+| hdr[11] | rec_ret | webcam.c | UIFS_StartMovieRecord return value |
+| hdr[12] | status_imm | webcam.c | movie_status immediately after call |
+| hdr[13] | status_final | webcam.c | movie_status after retry loop |
+| hdr[14] | retry_cnt | webcam.c | Number of retries before recording started |
 
 **Files involved**:
-- `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — **STOCK** CHDK code (no webcam patches)
-- `chdk/modules/webcam.c` — `capture_frame_h264()`, recording start/stop via UIFS_StartMovieRecord fire-and-forget
+- `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — `spy_ring_write()` + BL call in sub_FF85D98C_my
+- `chdk/modules/webcam.c` — spy buffer init, semaphore creation, retry loop, `capture_frame_h264()` with TakeSemaphore
 - `bridge/src/webcam/h264_decoder.cpp` — FFmpeg AVCC-to-Annex-B converter + decoder
 - `bridge/src/webcam/h264_decoder.h` — H.264 decoder header
 
