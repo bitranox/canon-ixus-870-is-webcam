@@ -1341,6 +1341,31 @@ static int capture_frame_h264(void)
     if (!recording_active || !frame_data_buf || !frame_sem) return 0;
     if (hdr[0] != 0x52455753) return 0;
 
+    // Check debug queue (lock-free SPSC: we read hdr[8]=write_idx, we own hdr[9]=read_idx)
+    {
+        unsigned int wr = hdr[8];
+        unsigned int rd = hdr[9];
+        if (wr != rd && wr < 4 && rd < 4) {
+            volatile unsigned char *slot =
+                (volatile unsigned char *)(0x000FF040 + rd * 512);
+            unsigned int dbg_size = *(volatile unsigned short *)slot;
+            if (dbg_size >= 12 && dbg_size <= 508) {
+                unsigned int i;
+                for (i = 0; i < dbg_size; i++)
+                    frame_data_buf[i] = slot[4 + i];
+
+                hw_jpeg_data = frame_data_buf;
+                hw_jpeg_size = dbg_size;
+                frame_width = 640;
+                frame_height = 480;
+                frame_format = WEBCAM_FMT_DEBUG;
+                hdr[9] = (rd + 1) % 4;  // Advance read index
+                return (int)dbg_size;
+            }
+            hdr[9] = (rd + 1) % 4;  // Invalid slot, skip it
+        }
+    }
+
     // Block until movie_rec.c signals a new frame (max 100ms).
     // spy_ring_write() stores ptr+size and calls GiveSemaphore(frame_sem).
     sem_ret = TakeSemaphore(frame_sem, 100);
@@ -1356,45 +1381,6 @@ static int capture_frame_h264(void)
         if (!src_ptr || size == 0) return 0;
         if (size > SPY_BUF_SIZE) size = SPY_BUF_SIZE;
         memcpy(frame_data_buf, src_ptr, size);
-    }
-
-    // One-shot debug injection: spy_idr_capture() writes debug values to
-    // hdr[8..15] (persistent slots not touched by spy_ring_write).
-    // When the marker is present, OVERWRITE the first 36 bytes of frame
-    // data with a debug AVCC NAL.  The AVCC parser finds NAL type=1 and
-    // returns only the 36-byte debug NAL.  The bridge decoder fails and
-    // prints the hex dump — showing our ring buffer diagnostic values.
-    //
-    // Previous approach (shift + prepend) failed: sub_FF92FE8C returns
-    // size=0x40000 (256KB ring chunk), clipped to SPY_BUF_SIZE=64KB,
-    // so "size + 36 <= SPY_BUF_SIZE" was always false.
-    if (hdr[8] == 0xDB600001 && size >= 36) {
-        // AVCC length prefix (big-endian): 32 bytes of NAL data
-        frame_data_buf[0] = 0x00;
-        frame_data_buf[1] = 0x00;
-        frame_data_buf[2] = 0x00;
-        frame_data_buf[3] = 0x20;  // length = 32
-        // NAL header: type=1 (P-frame), NRI=3 → 0x61
-        frame_data_buf[4] = 0x61;
-        // Marker byte + msg5_count
-        frame_data_buf[5] = 0xDB;
-        frame_data_buf[6] = (unsigned char)(hdr[15] & 0xFF);  // msg5_count
-        frame_data_buf[7] = 0xDB;
-        // Pack hdr[9..14] as 6 uint32 values (24 bytes) — little-endian
-        // bytes 8-11:  rb_base
-        // bytes 12-15: idr_ptr (current +0xD8)
-        // bytes 16-19: idr_size (current +0xDC)
-        // bytes 20-23: msg5_idr_ptr
-        // bytes 24-27: msg5_idr_size
-        // bytes 28-31: data_at_idr_ptr (first 4 bytes)
-        memcpy(frame_data_buf + 8, (void *)&hdr[9], 24);
-        // Pad bytes 32-35
-        frame_data_buf[32] = 0xDB;
-        frame_data_buf[33] = 0xDB;
-        frame_data_buf[34] = 0xDB;
-        frame_data_buf[35] = 0xDB;
-        size = 36;  // Return only the debug NAL
-        hdr[8] = 0;  // Clear marker — one-shot
     }
 
     // Capture first 8 bytes for Block 1 diagnostics
@@ -1653,7 +1639,12 @@ static int webcam_start(int jpeg_quality)
     {
         volatile unsigned int *spy = WEBCAM_SPY_ADDR;
         int si;
-        for (si = 0; si < 16; si++) spy[si] = 0;   // Clear all
+        for (si = 0; si < 16; si++) spy[si] = 0;   // Clear all (includes hdr[8]=wr, hdr[9]=rd → both 0)
+        {
+            volatile unsigned char *qmem = (volatile unsigned char *)0x000FF040;
+            int qi;
+            for (qi = 0; qi < 4 * 512; qi++) qmem[qi] = 0;  // Clear all debug queue slots
+        }
         spy[5] = (unsigned int)frame_sem;             // Semaphore handle
         spy[0] = 0x52455753;                          // Magic (enable LAST)
     }

@@ -62,6 +62,7 @@ constexpr uint16_t PTP_TYPE_RESPONSE = 3;
 constexpr uint32_t FRAME_FMT_JPEG = 0;
 constexpr uint32_t FRAME_FMT_UYVY = 1;
 constexpr uint32_t FRAME_FMT_H264 = 2;
+constexpr uint32_t FRAME_FMT_DEBUG = 3;
 
 // Frame received from camera (JPEG, raw UYVY, or H.264)
 struct MJPEGFrame {

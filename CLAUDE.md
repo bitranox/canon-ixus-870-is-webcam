@@ -6,6 +6,7 @@
 - **Document and commit BEFORE any code changes**: After receiving test results from the user, FIRST update docs with the findings, THEN commit. Only AFTER the commit may you proceed with further code changes.
 - **Run bridge with `--timeout 20 --no-preview --no-webcam`** during firmware development (graceful shutdown after 20s, no virtual webcam needed).
 - **Commit after each bridge test** with a message that describes what was tested and what the result was.
+- **Use the debug frame protocol** (`spy_debug_reset/add/send`) in `movie_rec.c` for all camera→bridge diagnostic output. Do NOT inject debug data into H.264 frames. See [Debug Frame Protocol](docs/debug-frame-protocol.md) for API reference and payload format.
 
 ## Project Overview
 
@@ -49,6 +50,7 @@ Detailed reference documents (see `docs/` directory):
 - [Camera & CHDK Reference](docs/camera-and-chdk.md) — firmware upgrade, CHDK installation, ALT mode, menus
 - [Firmware Reverse Engineering](docs/firmware-reverse-engineering.md) — Ghidra project, memory map, ISP architecture, JPCORE pipeline, decompiled functions
 - [Webcam Development Log](docs/webcam-development-log.md) — implementation progress, test results, failed approaches, current state
+- [Debug Frame Protocol](docs/debug-frame-protocol.md) — camera-to-bridge debug channel, tagged key-value frames, SPSC queue
 
 ## Development Environment (checked 2026-02-08)
 
@@ -93,7 +95,8 @@ C:\projects\ixus870IS\                          -- Project root
 ├── docs\                                       -- Reference documents
 │   ├── camera-and-chdk.md                      -- Camera & CHDK reference
 │   ├── firmware-reverse-engineering.md         -- Ghidra RE findings
-│   └── webcam-development-log.md              -- Webcam dev progress
+│   ├── webcam-development-log.md              -- Webcam dev progress
+│   └── debug-frame-protocol.md                -- Debug channel protocol & API
 ├── firmware-dumps\                             -- Canon P&S firmware dumps
 ├── firmware-analysis\                          -- Ghidra RE workspace
 │   ├── ghidra_project\ixus870_101a\            -- Ghidra project (ARM, auto-analyzed)

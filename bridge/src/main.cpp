@@ -61,6 +61,52 @@ static BOOL WINAPI console_ctrl_handler(DWORD dwCtrlType) {
 }
 #endif
 
+static FILE* g_debug_log = nullptr;
+
+static void print_debug_frame(const uint8_t* data, size_t size)
+{
+    if (size < 12 || data[0] != 'D' || data[1] != 'B' || data[2] != 'G' || data[3] != '!') {
+        fprintf(stderr, "  [DBG] Invalid debug frame (%zu bytes)\n", size);
+        return;
+    }
+
+    uint32_t seq;
+    uint16_t count;
+    memcpy(&seq, data + 4, 4);
+    memcpy(&count, data + 8, 2);
+
+    fprintf(stderr, "\n=== DEBUG FRAME #%u (%u entries, %zu bytes) ===\n", seq, count, size);
+
+    size_t off = 12;
+    for (uint16_t i = 0; i < count && off + 8 <= size; i++) {
+        char tag[5] = { (char)data[off], (char)data[off+1],
+                        (char)data[off+2], (char)data[off+3], 0 };
+        uint32_t val;
+        memcpy(&val, data + off + 4, 4);
+        fprintf(stderr, "  %-4s = 0x%08X  (%u)\n", tag, val, val);
+        off += 8;
+    }
+    fprintf(stderr, "=== END DEBUG ===\n\n");
+
+    // Append to log file
+    if (!g_debug_log)
+        g_debug_log = fopen("debug_frames.log", "a");
+    if (g_debug_log) {
+        fprintf(g_debug_log, "DEBUG #%u (%u entries):\n", seq, count);
+        off = 12;
+        for (uint16_t i = 0; i < count && off + 8 <= size; i++) {
+            char tag[5] = { (char)data[off], (char)data[off+1],
+                            (char)data[off+2], (char)data[off+3], 0 };
+            uint32_t val;
+            memcpy(&val, data + off + 4, 4);
+            fprintf(g_debug_log, "  %-4s = 0x%08X  (%u)\n", tag, val, val);
+            off += 8;
+        }
+        fprintf(g_debug_log, "\n");
+        fflush(g_debug_log);
+    }
+}
+
 struct Options {
     int jpeg_quality = 50;
     int output_width = 1280;
@@ -293,6 +339,12 @@ int main(int argc, char* argv[]) {
         }
         last_frame_num = mjpeg.frame_num;
 
+        // Handle debug frames — not video, just diagnostic data
+        if (mjpeg.format == ptp::FRAME_FMT_DEBUG) {
+            print_debug_frame(mjpeg.data.data(), mjpeg.data.size());
+            continue;  // Not a video frame — don't count or decode
+        }
+
         // Decode frame (JPEG, raw UYVY, or H.264)
         webcam::RGBFrame rgb;
         bool decode_ok;
@@ -362,6 +414,7 @@ int main(int argc, char* argv[]) {
             const char* fmt_name = "JPEG";
             if (mjpeg.format == ptp::FRAME_FMT_UYVY) fmt_name = "UYVY (raw)";
             else if (mjpeg.format == ptp::FRAME_FMT_H264) fmt_name = "H.264";
+            else if (mjpeg.format == ptp::FRAME_FMT_DEBUG) fmt_name = "DEBUG";
             printf("First frame: %ux%u, %zu bytes, format=%s\n",
                    mjpeg.width, mjpeg.height, mjpeg.data.size(), fmt_name);
         }
@@ -401,6 +454,7 @@ int main(int argc, char* argv[]) {
 
     // --- Cleanup ---
     printf("\nStopping...\n");
+    if (g_debug_log) { fclose(g_debug_log); g_debug_log = nullptr; }
     preview.shutdown();
     client.stop_webcam();
     vwebcam.shutdown();

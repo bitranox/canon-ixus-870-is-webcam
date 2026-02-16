@@ -48,12 +48,71 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
 }
 
 static int idr_sent = 0;
+static int msg5_done = 0;  // Set by spy_msg5_debug when msg 5 completes
 
 // Msg 5 debug capture — stores ring buffer values right after IDR encoding
 static unsigned int msg5_rb_base = 0;
 static unsigned int msg5_idr_ptr = 0;
 static unsigned int msg5_idr_size = 0;
 static unsigned int msg5_count = 0;
+
+// ============================================================
+// Debug frame queue (lock-free SPSC ring buffer)
+// Producer: movie_rec.c (spy_idr_capture via spy_debug_* API)
+// Consumer: webcam.c (capture_frame_h264 reads slots)
+// ============================================================
+#define DBG_SLOT_SIZE   512
+#define DBG_QUEUE_DEPTH 4
+#define DBG_QUEUE_BASE  0x000FF040
+
+static unsigned char dbg_build_buf[DBG_SLOT_SIZE];
+static unsigned int  dbg_build_len = 0;
+static unsigned int  dbg_seq = 0;
+
+// Start building a new debug frame
+static void spy_debug_reset(void)
+{
+    dbg_build_buf[0]='D'; dbg_build_buf[1]='B';
+    dbg_build_buf[2]='G'; dbg_build_buf[3]='!';
+    *(unsigned int *)(dbg_build_buf + 4) = dbg_seq++;
+    *(unsigned short *)(dbg_build_buf + 8) = 0;
+    dbg_build_buf[10] = 0; dbg_build_buf[11] = 0;
+    dbg_build_len = 12;
+}
+
+// Append a tagged uint32 entry to the current debug frame
+static void spy_debug_add(char t0, char t1, char t2, char t3, unsigned int value)
+{
+    if (dbg_build_len + 8 > DBG_SLOT_SIZE - 4) return;
+    dbg_build_buf[dbg_build_len]   = t0;
+    dbg_build_buf[dbg_build_len+1] = t1;
+    dbg_build_buf[dbg_build_len+2] = t2;
+    dbg_build_buf[dbg_build_len+3] = t3;
+    *(unsigned int *)(dbg_build_buf + dbg_build_len + 4) = value;
+    dbg_build_len += 8;
+    (*(unsigned short *)(dbg_build_buf + 8))++;
+}
+
+// Enqueue the debug frame — copy to next queue slot, advance write_idx
+static void spy_debug_send(void)
+{
+    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
+    unsigned int wr = hdr[8];
+    unsigned int rd = hdr[9];
+    unsigned int next_wr = (wr + 1) % DBG_QUEUE_DEPTH;
+    unsigned int i;
+    volatile unsigned char *slot;
+
+    if (next_wr == rd) return;  // Queue full — drop frame
+
+    slot = (volatile unsigned char *)(DBG_QUEUE_BASE + wr * DBG_SLOT_SIZE);
+    *(volatile unsigned short *)slot = (unsigned short)dbg_build_len;
+    slot[2] = 0; slot[3] = 0;
+    for (i = 0; i < dbg_build_len; i++)
+        slot[4 + i] = dbg_build_buf[i];
+
+    hdr[8] = next_wr;  // Advance write index LAST (memory barrier via volatile)
+}
 
 static void __attribute__((used,noinline)) spy_msg5_debug(void)
 {
@@ -64,53 +123,36 @@ static void __attribute__((used,noinline)) spy_msg5_debug(void)
         msg5_idr_ptr = *(volatile unsigned int *)(rb_base + 0xD8);
         msg5_idr_size = *(volatile unsigned int *)(rb_base + 0xDC);
     }
+    msg5_done = 1;  // Signal that IDR encoding is complete
 }
-
-// Debug frame buffer — sent as fake H.264 frame, bridge prints hex dump
-static unsigned char idr_debug_buf[64] __attribute__((aligned(32)));
 
 static int __attribute__((used,noinline)) spy_idr_capture(void)
 {
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    unsigned int rb_base;
-    unsigned int idr_ptr_val;
-    unsigned int idr_size;
-    unsigned int data_at_ptr;
+    unsigned int rb_base, idr_ptr_val, idr_size, data_at_ptr;
 
-    // Only active when webcam is running
-    if (hdr[0] != 0x52455753) {
-        idr_sent = 0;  // Reset so next webcam session gets IDR
-        return 0;
-    }
-    if (idr_sent) return 0;  // Already sent debug this session
+    if (hdr[0] != 0x52455753) { idr_sent = 0; msg5_done = 0; return 0; }
+    if (idr_sent) return 0;
+    if (!msg5_done) return 0;
     idr_sent = 1;
 
-    // Read ring buffer struct values
     rb_base = *(volatile unsigned int *)0xFF93050C;
-    idr_ptr_val = (rb_base != 0) ? *(volatile unsigned int *)(rb_base + 0xD8) : 0;
-    idr_size = (rb_base != 0) ? *(volatile unsigned int *)(rb_base + 0xDC) : 0;
+    idr_ptr_val = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD8) : 0;
+    idr_size    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xDC) : 0;
+    data_at_ptr = (idr_ptr_val && idr_ptr_val < 0x40000000)
+                  ? *(volatile unsigned int *)idr_ptr_val : 0xDEADDEAD;
 
-    // Read first 4 bytes at IDR pointer (to verify if data is still IDR)
-    if (idr_ptr_val != 0 && idr_ptr_val < 0x40000000) {
-        data_at_ptr = *(volatile unsigned int *)idr_ptr_val;
-    } else {
-        data_at_ptr = 0xDEADDEAD;
-    }
+    spy_debug_reset();
+    spy_debug_add('R','B','a','s', rb_base);
+    spy_debug_add('I','d','r','P', idr_ptr_val);
+    spy_debug_add('I','d','r','S', idr_size);
+    spy_debug_add('M','5','P','t', msg5_idr_ptr);
+    spy_debug_add('M','5','S','z', msg5_idr_size);
+    spy_debug_add('D','a','t','P', data_at_ptr);
+    spy_debug_add('M','5','C','t', msg5_count);
+    spy_debug_send();
 
-    // Write debug values to hdr[8..13] — persistent slots NOT touched by
-    // spy_ring_write.  webcam.c will inject these into the first frame.
-    // Previous approach (spy_ring_write debug frame) failed due to race:
-    // next msg 6 P-frame overwrites spy buffer before webcam.c reads it.
-    hdr[8]  = 0xDB600001;      // Debug marker (webcam.c checks this)
-    hdr[9]  = rb_base;         // Ring buffer struct base from 0xFF93050C
-    hdr[10] = idr_ptr_val;     // Current +0xD8 value (IDR NAL pointer)
-    hdr[11] = idr_size;        // Current +0xDC value (IDR NAL size)
-    hdr[12] = msg5_idr_ptr;    // +0xD8 captured during msg 5
-    hdr[13] = msg5_idr_size;   // +0xDC captured during msg 5
-    hdr[14] = data_at_ptr;     // First 4 bytes at idr_ptr (IDR data check)
-    hdr[15] = msg5_count;      // How many times msg 5 was called
-
-    return 0;  // Let P-frame through — webcam.c injects debug into it
+    return 0;
 }
 
 
