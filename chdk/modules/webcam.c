@@ -1275,6 +1275,11 @@ static int capture_frame_h264(void)
     volatile unsigned int *hdr = WEBCAM_SPY_ADDR;
     unsigned int size;
     int sem_ret;
+    static int last_sem_ret = -99;   // TakeSemaphore result from previous call
+    static unsigned int dbg_first8[2] = {0,0};  // First 8 bytes of frame data
+    static unsigned int dbg_nal_len = 0;        // First NAL length from parser
+    static unsigned int dbg_nal_hdr = 0;        // First NAL header byte
+    static unsigned int dbg_parse_result = 0;   // Parser outcome bitfield
 
     // ---- Populate diagnostics for bridge visibility ----
     // hw_mjpeg_get_frame diagnostics are never called during recording,
@@ -1301,11 +1306,33 @@ static int capture_frame_h264(void)
         D32(36, hdr[12]);              // movie_status @ 0ms
         D32(40, hdr[13]);              // movie_status after retry loop
         D32(44, hdr[14]);              // retry count (0-49, 50=timed out)
-        D32(48, avi_sem_handle);       // AVI write semaphore handle
+        D32(48, (unsigned int)last_sem_ret);  // TakeSemaphore result from prev call
         // Current camera state
         D32(52, camera_info.state.mode_video);  // mode_video flag
         D32(56, camera_info.state.mode_play);   // mode_play flag
         D32(60, camera_info.state.mode_rec);    // mode_rec flag
+
+        // Block 1 (64-127): Spy buffer state + movie task frame-skip fields
+        D32(64, hdr[0]);               // spy magic (should be 0x52455753)
+        D32(68, hdr[1]);               // spy data_ptr
+        D32(72, hdr[2]);               // spy frame_size (written by spy_ring_write)
+        D32(76, hdr[3]);               // spy frame_count (written by spy_ring_write)
+        D32(80, hdr[4]);               // spy max_size
+        D32(84, hdr[5]);               // spy sem_handle
+        // Movie task fields related to frame skip logic in sub_FF85D98C_my
+        // LDRH [R6,#2] reads halfword at byte +2 = upper 16 bits of word 0 (LE)
+        D32(88, (movtask[0] >> 16) & 0xFFFF);  // movtask+0x02 halfword (frame skip mode)
+        // LDRH [R6,#4] reads halfword at byte +4 = lower 16 bits of word 1 (LE)
+        D32(92, movtask[1] & 0xFFFF);           // movtask+0x04 halfword (frame skip rate)
+        D32(96, movtask[0x48/4]);      // movtask+0x48 (frame skip calc param)
+        D32(100, movtask[0x2C/4]);     // movtask+0x2C (stop flag)
+        D32(104, movtask[0x40/4]);     // movtask+0x40 (max frames)
+        // AVCC parser debug (from previous call)
+        D32(108, dbg_first8[0]);       // first 4 bytes of frame data
+        D32(112, dbg_first8[1]);       // next 4 bytes of frame data
+        D32(116, dbg_nal_len);         // first NAL length parsed
+        D32(120, dbg_nal_hdr);         // first NAL header byte
+        D32(124, dbg_parse_result);    // parser outcome bits
 
         #undef D32
         hw_diag_len = HW_DIAG_SIZE;
@@ -1317,10 +1344,24 @@ static int capture_frame_h264(void)
     // Block until movie_rec.c signals a new frame (max 100ms).
     // spy_ring_write() does memcpy + GiveSemaphore(frame_sem).
     sem_ret = TakeSemaphore(frame_sem, 100);
+    last_sem_ret = sem_ret;
     if (sem_ret != 0) return 0;  // Timeout — no frame available
 
     // Frame data is already in frame_data_buf (copied by spy_ring_write).
     size = hdr[2];  // Actual bytes copied
+
+    // Capture first 8 bytes for diagnostics regardless of parser outcome
+    if (frame_data_buf && size >= 8) {
+        dbg_first8[0] = ((unsigned int)frame_data_buf[0] << 24) |
+                        ((unsigned int)frame_data_buf[1] << 16) |
+                        ((unsigned int)frame_data_buf[2] << 8) |
+                        (unsigned int)frame_data_buf[3];
+        dbg_first8[1] = ((unsigned int)frame_data_buf[4] << 24) |
+                        ((unsigned int)frame_data_buf[5] << 16) |
+                        ((unsigned int)frame_data_buf[6] << 8) |
+                        (unsigned int)frame_data_buf[7];
+    }
+
     if (size == 0 || size > SPY_BUF_SIZE) return 0;
 
     // Parse AVCC NAL units to determine actual H.264 frame size.
@@ -1344,12 +1385,27 @@ static int capture_frame_h264(void)
                                   (unsigned int)p[pos+3];
             unsigned int nal_type;
 
-            if (nal_len < 2 || nal_len > 120000) break;
+            // Capture first NAL debug info
+            if (nal_count == 0) {
+                dbg_nal_len = nal_len;
+                dbg_nal_hdr = p[pos + 4];
+            }
+
+            if (nal_len < 2 || nal_len > 120000) {
+                dbg_parse_result = 0x10 | nal_count;  // len out of range
+                break;
+            }
 
             nal_type = p[pos + 4] & 0x1F;
-            if (p[pos + 4] & 0x80) break;  // forbidden_zero_bit
+            if (p[pos + 4] & 0x80) {
+                dbg_parse_result = 0x20 | nal_count;  // forbidden_zero_bit
+                break;
+            }
 
-            if (nal_type != 1 && nal_type != 5 && nal_type != 6) break;
+            if (nal_type != 1 && nal_type != 5 && nal_type != 6) {
+                dbg_parse_result = 0x30 | nal_type;   // unexpected NAL type
+                break;
+            }
 
             total = pos + 4 + nal_len;
             pos = total;
@@ -1357,6 +1413,7 @@ static int capture_frame_h264(void)
 
             if (nal_type == 1 || nal_type == 5) {
                 have_vcl = 1;
+                dbg_parse_result = 0x100 | nal_count; // success
                 break;
             }
         }

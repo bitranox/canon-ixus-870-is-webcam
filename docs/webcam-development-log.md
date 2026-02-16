@@ -81,7 +81,7 @@ Added `tje_encode_uyvy()` to the TJE encoder to handle the UYVY (YUV422) format 
 - `chdk/modules/webcam.c` — 640x480 rec_cb_arg2 path in `capture_and_compress_frame_sw()`, `disable_shutdown()`/`enable_shutdown()`
 - `chdk/modules/module_exportlist.c` — Exported `disable_shutdown` and `enable_shutdown` to modules
 
-## H.264 Spy Buffer Approach — Option D (2026-02-11 to 2026-02-15)
+## H.264 Spy Buffer Approach — Option D (2026-02-11 to 2026-02-16)
 
 **Concept**: Instead of trying to activate JPCORE independently, use the camera's own movie recording pipeline. Start actual video recording via `UIFS_StartMovieRecord`, then intercept the H.264 encoded frames from `sub_FF85D98C_my` in `movie_rec.c` via a spy buffer at RAM `0x000FF000`.
 
@@ -218,7 +218,40 @@ Without spy buffer diagnostics in the per-frame output, we cannot distinguish be
 - **Scenario B**: Frame skip logic bypasses sub_FF92FE8C entirely → spy_ring_write never called → TakeSemaphore times out
 - **Scenario C**: spy buffer magic at 0x000FF000 is overwritten by recording ring buffer → spy_ring_write returns early
 
-**Next step**: Add spy buffer fields (hdr[0] magic, hdr[2] frame_size, hdr[3] frame_count, TakeSemaphore return value) to the H.264 diagnostics in capture_frame_h264(). This will reveal whether spy_ring_write is being called and what data it's writing.
+### Second Test — With Spy Buffer Diagnostics (2026-02-16)
+
+Added spy buffer state and AVCC parser debug fields to Block 1 of H.264 diagnostics. Camera started recording (user confirmed).
+
+**Result**: 0 frames delivered to bridge, BUT **spy_ring_write IS working**:
+
+| Diagnostic | Value | Meaning |
+|-----------|-------|---------|
+| hdr[0] spy magic | 0x52455753 | Spy buffer intact |
+| hdr[2] frame_size | 65536 | spy_ring_write copies 64KB per frame |
+| hdr[3] frame_count | 2→4→5→6→7→9→10→12... | **Incrementing — spy_ring_write called at 30fps** |
+| last_sem_ret | 0 | **TakeSemaphore succeeds** |
+| dbg_first8[0] | alternates 0 and 1 | First 4 bytes = `00 00 00 00` or `00 00 00 01` |
+| dbg_first8[1] | 0 | Bytes 4-7 = `00 00 00 00` |
+| dbg_parse_result | 0 | Parser never sets result (see below) |
+
+**The entire data delivery pipeline works**: spy_ring_write copies data, signals semaphore, TakeSemaphore returns 0.
+
+**Root cause: frame data starts with zeros, not AVCC**. The AVCC parser interprets the first 4 bytes as NAL length: `00 00 00 00` → nal_len=0 (< minimum 2, rejected) or `00 00 00 01` → nal_len=1 (< minimum 2, rejected). Every frame is rejected.
+
+**Why the data isn't valid AVCC**: sub_FF92FE8C returns jpeg_size >= 65536 (ring buffer chunk size), not the individual frame size (~5-40 KB seen in previous pointer-based tests). The 64KB chunk likely contains:
+- Ring buffer metadata/header at the start (the `00 00 00 0x` bytes)
+- Actual H.264 AVCC data at some offset within the chunk
+
+In the previous working spy buffer approach (v1 pointer-only), the bridge read data via PTP memory read at the exact pointer. Individual frames were 35-40 KB with valid AVCC at the start. Now we copy 64KB starting from the same pointer, but get metadata at the start. Two possible explanations:
+1. **Ring buffer header**: The pointer from sub_FF92FE8C points to a ring buffer entry header, not directly to H.264 data. The header might contain a length/sequence field, followed by the actual encoded data at some fixed offset.
+2. **Cache coherency**: If Canon's `_memcpy` uses DMA for large copies, the destination buffer may have stale cached data. But dbg_first8[0] does alternate (not constant zeros), arguing against full cache staleness.
+
+**dbg_parse_result = 0 anomaly**: The parser should set `0x10` (nal_len out of range) but the static always shows 0. Either the code returns before the parser (despite TakeSemaphore succeeding), or static variable writes in the parser are not persisting. The pre-parser statics (last_sem_ret, dbg_first8) DO work. This needs investigation.
+
+**Next steps**:
+1. Read more bytes (first 32-64 bytes) from the frame buffer to find where AVCC data starts
+2. Try reading from `ptr + offset` to skip potential ring buffer header
+3. Verify _memcpy cache coherency by reading back a few bytes with uncached mirror access
 
 ## Future Ideas (Not Yet Implemented)
 
