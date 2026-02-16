@@ -106,7 +106,7 @@ Added `tje_encode_uyvy()` to the TJE encoder to handle the UYVY (YUV422) format 
 - PC bridge receives and decodes them via FFmpeg (confirmed up to 22 consecutive frames in one session)
 - `capture_frame_h264()` reads spy buffer non-blocking (check once, return immediately)
 
-**Current state (2026-02-16)**: `spy_ring_write()` re-added to movie_rec.c — copies frame data to webcam module's buffer and signals semaphore for synchronous delivery. Recording starts via `UIFS_StartMovieRecord` with a retry loop waiting for `movie_status == VIDEO_RECORD_IN_PROGRESS`. NOT YET TESTED with the complete solution (spy_ring_write + semaphore delivery).
+**Current state (2026-02-16)**: `spy_ring_write()` in movie_rec.c copies frame data to webcam module's buffer and signals semaphore for synchronous delivery. Recording starts via `UIFS_StartMovieRecord` with a retry loop waiting for `movie_status == VIDEO_RECORD_IN_PROGRESS`.
 
 **Recording start method**: `UIFS_StartMovieRecord` (0xFF883D50) posts event 0x9A1 to CtrlSrv which processes it asynchronously. **Takes ~1 second** to reach movie_status=4 (VIDEO_RECORD_IN_PROGRESS). A retry loop (up to 50 × 100ms = 5 seconds) is required — the old "fire-and-forget" pattern with only 200ms wait was insufficient and left movie_status at 0.
 
@@ -169,6 +169,56 @@ The original spy buffer only stored a POINTER to Canon's H.264 ring buffer. The 
 - `chdk/modules/webcam.c` — spy buffer init, semaphore creation, retry loop, `capture_frame_h264()` with TakeSemaphore
 - `bridge/src/webcam/h264_decoder.cpp` — FFmpeg AVCC-to-Annex-B converter + decoder
 - `bridge/src/webcam/h264_decoder.h` — H.264 decoder header
+
+### First Test — spy_ring_write + Semaphore Delivery (2026-02-16)
+
+**Build**: commit `c7dc45f` (spy_ring_write + semaphore frame delivery + retry loop)
+
+**Test**: `chdk-webcam.exe --timeout 20 --no-preview --no-webcam`
+
+**Result**: Camera started recording (user confirmed visually). **0 frames received by bridge** in 20 seconds. All frame polls returned `gf_rc=-1`.
+
+**Decoded H.264 diagnostics** (capture_frame_h264 populates Block 0 in H.264 format, but bridge displays it with MJPEG state labels — decode table):
+
+| Bridge Display (MJPEG label) | H.264 Diagnostic Field | Value | Meaning |
+|------------------------------|----------------------|-------|---------|
+| +0x48 MJPEG active = 1211250228 | D32(0) H264 marker | 0x48323634 ("H264") | Format identifier |
+| +0x4C paired flag = 1 | D32(4) recording_active | 1 | **Recording active in webcam module** |
+| +0x54 DMA status = 2205816 | D32(8) frame_data_buf | ~0x21A1E8 | Buffer allocated |
+| +0x58 DMA frame idx = 82969244 | D32(12) frame_sem | ~0x04F1A9AC | Semaphore created |
+| +0x5C DMA req state = 0 | D32(16) avi_sem_handle | 0 | No AVI semaphore |
+| +0x60 ring buf addr = 4 | D32(20) movie_status | **4** | **VIDEO_RECORD_IN_PROGRESS** |
+| +0x64 VRAM buf addr = 4 | D32(24) movie task STATE | **4** | Task state = running |
+| +0x6C rec buffer = 3→4→6→7→8... | D32(28) movtask[+0x50] frame counter | **Incrementing** | **Frames being processed** |
+| +0x80 cleanup cb = 0 | D32(32) rec_ret | 0 | UIFS_StartMovieRecord returned 0 (success) |
+| +0xA0 DMA callback = 0 | D32(36) status_imm | 0 | movie_status=0 immediately after call |
+| +0xB0 event flag = 4 | D32(40) status_final | 4 | movie_status=4 after retry loop |
+| +0xD4 video mode = 10 | D32(44) retry_cnt | **10** | ~1 second to start recording |
+| +0xF0 frame skip = 1 | D32(52) mode_video | 1 | Camera in video mode |
+| +0x118 rec callback 2 = 1 | D32(60) mode_rec | 1 | Camera in rec mode |
+
+**Initial diagnostics** (captured right after start_webcam returns, before recording completes async startup): ALL ZEROS — movie_status=0, all spy fields zero, all pipeline state zero. This is expected since UIFS_StartMovieRecord takes ~1 second to complete.
+
+**Key findings**:
+1. **Recording started successfully**: movie_status=4, movie task STATE=4, UIFS_StartMovieRecord returned 0, took 10 retries (~1 second)
+2. **Movie task frame counter IS incrementing** (3→4→6→7→8...): sub_FF85D98C_my IS being called and frames ARE being processed by the firmware
+3. **0 frames delivered via spy buffer**: TakeSemaphore always times out (or capture_frame_h264 finds no valid data)
+4. **Blocks 1-8 all zeros in per-frame diagnostics**: capture_frame_h264() only populates Block 0 — the spy buffer state at 0x000FF000 is NOT visible in per-frame diagnostics
+5. **Bridge diagnostic format mismatch**: The bridge displays Block 0 with MJPEG state labels, making the H.264 data appear as nonsensical values (e.g., "MJPEG active = 1211250228" is actually the H264 format marker)
+
+**Root cause analysis — why spy_ring_write() produces no frames**:
+
+The movie task frame counter increments at `loc_FF85DCBC` in sub_FF85D98C_my. This location is reached via TWO paths:
+
+1. **Normal path**: sub_FF92FE8C returns 0 → spy_ring_write called → loc_FF85DA24 → loc_FF85DB24 → check jpeg_size → loc_FF85DCBC
+2. **Frame skip path**: Frame rate check at movtask[+0x02] decides to skip → jumps to loc_FF85DA24 (bypassing sub_FF92FE8C entirely) → loc_FF85DB24 → jpeg_size=0 (stack init) → loc_FF85DCBC
+
+Without spy buffer diagnostics in the per-frame output, we cannot distinguish between:
+- **Scenario A**: sub_FF92FE8C returns 0 but jpeg_size=0 → spy_ring_write copies 0 bytes → capture_frame_h264 sees size=0, returns 0
+- **Scenario B**: Frame skip logic bypasses sub_FF92FE8C entirely → spy_ring_write never called → TakeSemaphore times out
+- **Scenario C**: spy buffer magic at 0x000FF000 is overwritten by recording ring buffer → spy_ring_write returns early
+
+**Next step**: Add spy buffer fields (hdr[0] magic, hdr[2] frame_size, hdr[3] frame_count, TakeSemaphore return value) to the H.264 diagnostics in capture_frame_h264(). This will reveal whether spy_ring_write is being called and what data it's writing.
 
 ## Future Ideas (Not Yet Implemented)
 
