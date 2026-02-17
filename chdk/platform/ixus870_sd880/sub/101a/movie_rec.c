@@ -127,7 +127,10 @@ static void spy_debug_send(void)
 
 static void __attribute__((used,noinline)) spy_msg5_debug(void)
 {
+    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
     unsigned int rb_base = *(volatile unsigned int *)0xFF93050C;
+    unsigned int dma_base, idr_buf, ihd0, ihd4;
+
     msg5_count++;
     msg5_rb_base = rb_base;
     if (rb_base != 0) {
@@ -135,29 +138,66 @@ static void __attribute__((used,noinline)) spy_msg5_debug(void)
         msg5_idr_size = *(volatile unsigned int *)(rb_base + 0xDC);
     }
     msg5_done = 1;  // Signal that IDR encoding is complete
+
+    // Send debug frame from msg 5 context (first occurrence only).
+    // sub_FF85D3BC (IDR encoding) is synchronous — data at DMA base + 0x100040
+    // should be fully written by the time we get here.
+    if (hdr[0] == 0x52455753 && msg5_count <= 1) {
+        dma_base = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD0) : 0;
+        idr_buf  = (dma_base > 0x01000000) ? dma_base + 0x100040 : 0;
+        ihd0     = idr_buf ? *(volatile unsigned int *)idr_buf : 0xDEADDEAD;
+        ihd4     = idr_buf ? *(volatile unsigned int *)(idr_buf + 4) : 0xDEADDEAD;
+
+        spy_debug_reset();
+        spy_debug_add('S','r','c','_', 0x4D534735);  // "MSG5"
+        spy_debug_add('R','B','a','s', rb_base);
+        spy_debug_add('D','M','A','b', dma_base);
+        spy_debug_add('I','B','u','f', idr_buf);      // DMA base + 0x100040
+        spy_debug_add('I','H','d','0', ihd0);         // First 4 bytes at IDR buffer
+        spy_debug_add('I','H','d','4', ihd4);         // Bytes 4-7 (NAL byte area)
+        spy_debug_add('I','d','r','P', msg5_idr_ptr); // +0xD8 (MOV file offset)
+        spy_debug_add('I','d','r','S', msg5_idr_size); // +0xDC (MOV file offset)
+        spy_debug_add('M','5','C','t', msg5_count);
+        spy_debug_add('M','6','C','t', idr_sent);     // How many msg 6 calls so far
+        spy_debug_send();
+    }
 }
 
-static int __attribute__((used,noinline)) spy_idr_capture(void)
+static int __attribute__((used,noinline)) spy_idr_capture(unsigned char *frame_ptr, unsigned int frame_size)
 {
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    unsigned int rb_base, idr_ptr_val, idr_size, data_at_ptr;
+    unsigned int rb_base, idr_ptr_val, idr_size;
+    unsigned int dma_base, idr_buf, ihd0, ihd4;
+
+    (void)frame_ptr; (void)frame_size;  // passed from asm, not used in debug output
 
     if (hdr[0] != 0x52455753) { idr_sent = 0; return 0; }
-    if (idr_sent >= 2) return 0;  // fire on first 2 msg 6 calls
     idr_sent++;
 
-    rb_base = *(volatile unsigned int *)0xFF93050C;
+    // Send debug on frames 1-2 (before msg 5) and first frame after each msg 5
+    if (idr_sent > 2) {
+        if (msg5_done != 1 || idr_sent > 300) return 0;
+        msg5_done = 2;  // Consume flag — one msg 6 debug per msg 5 occurrence
+    }
+
+    rb_base     = *(volatile unsigned int *)0xFF93050C;
     idr_ptr_val = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD8) : 0;
     idr_size    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xDC) : 0;
-    data_at_ptr = (idr_ptr_val && idr_ptr_val < 0x40000000)
-                  ? *(volatile unsigned int *)idr_ptr_val : 0xDEADDEAD;
+    dma_base    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD0) : 0;
+    idr_buf     = (dma_base > 0x01000000) ? dma_base + 0x100040 : 0;
+    ihd0        = idr_buf ? *(volatile unsigned int *)idr_buf : 0xDEADDEAD;
+    ihd4        = idr_buf ? *(volatile unsigned int *)(idr_buf + 4) : 0xDEADDEAD;
 
     spy_debug_reset();
-    spy_debug_add('S','r','c','_', (idr_sent == 1) ? 0x4D362E31 : 0x4D362E32);  // "M6.1" or "M6.2"
+    spy_debug_add('S','r','c','_', 0x4D534736);   // "MSG6"
+    spy_debug_add('F','r','#','_', idr_sent);      // Frame number (msg 6 call count)
     spy_debug_add('R','B','a','s', rb_base);
-    spy_debug_add('I','d','r','P', idr_ptr_val);
-    spy_debug_add('I','d','r','S', idr_size);
-    spy_debug_add('D','a','t','P', data_at_ptr);
+    spy_debug_add('D','M','A','b', dma_base);      // DMA region base (rb_base + 0xD0)
+    spy_debug_add('I','B','u','f', idr_buf);       // IDR buffer = DMA base + 0x100040
+    spy_debug_add('I','H','d','0', ihd0);          // First 4 bytes at IDR buffer
+    spy_debug_add('I','H','d','4', ihd4);          // Bytes 4-7 at IDR buffer
+    spy_debug_add('I','d','r','P', idr_ptr_val);   // +0xD8 (MOV file offset)
+    spy_debug_add('I','d','r','S', idr_size);      // +0xDC (MOV file offset)
     spy_debug_add('M','5','C','t', msg5_count);
     spy_debug_add('M','5','D','n', msg5_done);
     spy_debug_send();
@@ -314,14 +354,16 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "MOVS    R8, R0\n"
                  "BNE     loc_FF85DA40\n"
 
-                // One-shot IDR capture: on first frame, send IDR instead of P-frame
-                "BL      spy_idr_capture\n"    // Returns 1 if IDR was sent
+                // Debug + frame delivery: pass frame ptr/size to spy_idr_capture
+                "LDR     R0, [SP, #0x34]\n"    // R0 = frame_ptr from sub_FF92FE8C
+                "LDR     R1, [SP, #0x30]\n"    // R1 = frame_size
+                "BL      spy_idr_capture\n"    // spy_idr_capture(ptr, size) — sends debug frame
                 "CMP     R0, #0\n"
-                "BNE     loc_FF85DA24\n"       // Skip P-frame if IDR was sent
-                // Normal P-frame delivery
-                "LDR     R0, [SP, #0x34]\n"    // R0 = jpeg_ptr from sub_FF92FE8C
-                "LDR     R1, [SP, #0x30]\n"    // R1 = jpeg_size
-                "BL      spy_ring_write\n"     // Send P-frame
+                "BNE     loc_FF85DA24\n"       // Skip spy_ring_write if non-zero return
+                // Normal frame delivery
+                "LDR     R0, [SP, #0x34]\n"    // R0 = frame_ptr
+                "LDR     R1, [SP, #0x30]\n"    // R1 = frame_size
+                "BL      spy_ring_write\n"     // Send frame to webcam module
 
  "loc_FF85DA24:\n"
                  "LDR     R0, [R6,#0x2C]\n"

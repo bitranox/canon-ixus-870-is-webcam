@@ -348,12 +348,22 @@ int main(int argc, char* argv[]) {
                 uint32_t src_val;
                 memcpy(&src_val, mjpeg.data.data() + 16, 4);
                 if (src_val == 0x4D362E32) {  // "M6.2"
-                    uint32_t idr_ptr = 0, rb_base = 0, idr_size = 0;
-                    if (mjpeg.data.size() >= 40) {
-                        memcpy(&rb_base, mjpeg.data.data() + 24, 4);   // RBas value
-                        memcpy(&idr_ptr, mjpeg.data.data() + 32, 4);   // IdrP value
-                        memcpy(&idr_size, mjpeg.data.data() + 40, 4);  // IdrS value
-                    }
+                    // Search debug frame entries by tag name (robust against layout changes)
+                    auto find_tag = [&](const char tag[4]) -> uint32_t {
+                        size_t pos = 12;  // skip header
+                        while (pos + 8 <= mjpeg.data.size()) {
+                            if (mjpeg.data[pos] == tag[0] && mjpeg.data[pos+1] == tag[1] &&
+                                mjpeg.data[pos+2] == tag[2] && mjpeg.data[pos+3] == tag[3]) {
+                                uint32_t v; memcpy(&v, mjpeg.data.data() + pos + 4, 4);
+                                return v;
+                            }
+                            pos += 8;
+                        }
+                        return 0;
+                    };
+                    uint32_t rb_base = find_tag("RBas");
+                    uint32_t idr_ptr = find_tag("IdrP");
+                    uint32_t idr_size = find_tag("IdrS");
                     fprintf(stderr, "\n=== MEMORY PROBE (after M6.2) ===\n");
                     fprintf(stderr, "  rb_base=0x%08X  IdrP=0x%08X  IdrS=%u\n", rb_base, idr_ptr, idr_size);
 

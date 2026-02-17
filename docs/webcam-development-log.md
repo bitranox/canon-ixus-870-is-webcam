@@ -810,6 +810,97 @@ Both are code-only changes (inline asm + stack local variable). BSS stays at exa
 - **Camera shut down cleanly** — no hang, no battery pull needed
 - Bridge exited cleanly after 20-second timeout
 
+## v18.3 — DMA/IDR Buffer Probes + Message Architecture Discovery (2026-02-18)
+
+**Goal**: Find IDR frame data in camera RAM by instrumenting both msg 5 (IDR encoding) and msg 6 (P-frame retrieval) with debug frames that read the DMA region and IDR buffer.
+
+### Changes
+
+**`spy_msg5_debug`** — Enhanced to send a debug frame tagged "MSG5" with:
+- DMA base from `rb_base + 0xD0` (expected 0x02AD0000)
+- IDR buffer address: `DMA base + 0x100040` (expected 0x02BD0040)
+- First 8 bytes at IDR buffer (IHd0, IHd4)
+- Ring buffer +0xD8/+0xDC values and counters
+- Only fires on first msg 5 occurrence
+
+**`spy_idr_capture`** — Redesigned firing pattern:
+- Frames 1-2: always (early state before msg 5)
+- First msg 6 after each msg 5: triggered by `msg5_done` flag transition (1→2)
+- Same DMA/IDR buffer fields as msg 5 debug frame
+- Removed NAL/AVCL fields (DMA not written when spy_idr_capture reads)
+
+**Build**: text=90936 (+464), data=41928, bss=14544 (unchanged), MD5=0c7640fcf65a06309bf29e88e5b4391e
+
+### Test result
+
+- Clean 20s session, 300+ H.264 P-frames received (all NAL=0x61)
+- **2 debug frames received (both MSG6)** — zero MSG5 debug frames
+- **msg 5 NEVER fired** during the entire 20s session (M5Ct=0, M5Dn=0)
+- DMA base and IDR buffer addresses confirmed:
+
+| Field | Frame 1 | Frame 2 |
+|-------|---------|---------|
+| DMAb | 0x02AD0000 | 0x02AD0000 |
+| IBuf | 0x02BD0040 | 0x02BD0040 |
+| IHd0 | 0xFFFFFFFF | 0xFFFFFFFF |
+| IHd4 | 0xFFFFFFFF | 0xFFFFFFFF |
+| IdrP | 0x00000000 | 0x000158AC |
+| IdrS | 0x00000000 | 0x0000BF60 |
+| M5Ct | 0 | 0 |
+| M5Dn | 0 | 0 |
+
+- IDR buffer at 0x02BD0040 contains 0xFFFFFFFF — **never written** during webcam session
+- IdrP/IdrS on frame 2 are stale MOV file offsets from a previous recording session
+
+### Critical discovery: H.264 recording message architecture
+
+Decompilation analysis of all message handlers in movie_record_task revealed the full recording architecture:
+
+**sub_FF92FE8C (msg 6) is a frame GETTER, not an encoder.** It reads the next frame from the ring buffer — it does NOT encode anything. The ring buffer is populated by the JPCORE hardware pipeline running autonomously.
+
+**IDR frames never enter the ring buffer.** They are encoded separately and written directly to the MOV file:
+
+| Message | Handler | Role |
+|---------|---------|------|
+| msg 11 | loc_FF85E0AC | Init: clear counters, STATE=1 |
+| msg 2 | sub_FF85DE1C | Start recording: allocate DMA region, set up JPCORE pipeline, configure ring buffer, register callbacks, STATE=2 |
+| msg 5 | sub_FF85D3BC | First-frame init: encode first IDR via `FUN_ff8eddfc` to `DMA+0x100040`, write MOV file header (`ftyp`+`mdat`+SPS/PPS), set up `RecPipelineSetup` + `StartMjpegMaking` |
+| msg 6 | sub_FF85D98C | Frame retrieval: call `sub_FF92FE8C` to read next P-frame from ring buffer, write to MOV file via `sub_FF8EDBE0` |
+| msg 8 | sub_FF92FDF0 | Frame committed: notification from JPCORE pipeline, cache writeback, conditionally calls `FUN_ff92fd78` |
+| msg 4 | sub_FF85D6CC | **Periodic IDR**: stops pipeline (`StopMjpegMaking_Inner`), re-encodes IDR to `DMA+0x100040`, then **posts msg 5** to the queue (`*puVar6 = 5; FUN_ff8279ec(queue, ...)`) |
+| msg 7 | sub_FF85D218 | Stop recording: cleanup, flush |
+| msg 10 | sub_FF85E28C | Shutdown: reset state |
+
+**Recording flow**:
+```
+msg 11 (init) → msg 2 (start pipeline) → msg 5 (first IDR + MOV header)
+  → pipeline runs autonomously:
+      JPCORE encodes P-frames → ring buffer → msg 8 (committed) → msg 6 (read + MOV write)
+  → every ~15 frames:
+      msg 4 (stop pipeline, encode IDR) → posts msg 5 (write IDR + MOV header update)
+      → pipeline restarts
+```
+
+**Why our webcam session only gets P-frames**:
+1. Camera is already recording when webcam module starts
+2. msg 5 (first IDR) already fired at recording start — before our hooks were active
+3. msg 4 (periodic IDR) does NOT fire during webcam sessions (unknown trigger mechanism)
+4. The ring buffer only contains P-frames from the continuous JPCORE pipeline
+5. Our spy hook in msg 6 → sub_FF92FE8C can ONLY read from the ring buffer
+6. Therefore: **IDR frames are architecturally unreachable through the ring buffer path**
+
+**sub_FF92FE8C ring buffer details**:
+- First frame (counter==1): reads from `+0xC0` (0x412C4720, uncached DMA alias)
+- Subsequent frames: reads from `+0x1C` (write pointer, advances through ring)
+- Frame size from `+0x70` (total frame size field)
+- Ring wraps when `+0x1C` reaches `+0xC8` (buffer end), continues from `+0xC4`
+
+**Key functions identified**:
+- `FUN_ff8eddfc` (0xFF8EDDFC, 560 bytes): JPCORE H.264 encoder — configures pipeline registers, sets output buffers, starts encoding. Called by msg 5 for first IDR.
+- `FUN_ff8ee610`: Secondary encoder — called by msg 4 for periodic IDR re-encoding to `DMA+0x100040`.
+- `FUN_ff930b20` (0xFF930B20, 344 bytes): MOV container header writer — creates file atoms, writes SPS/PPS + IDR data to SD card.
+- `FUN_ff93048c` (0xFF93048C, 24 bytes): Returns `+0xD8`/`+0xDC` from ring buffer struct — these are MOV file offsets, NOT RAM pointers.
+
 ## Future Ideas (Not Yet Implemented)
 
 ### Raw YUV Pipeline Streaming (640x480)
