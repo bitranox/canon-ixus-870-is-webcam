@@ -976,6 +976,75 @@ The SPS/PPS are static for a given resolution/quality setting. Once extracted, t
 
 **Alternative**: Option 6 (accept current behavior) already works — FFmpeg syncs via error concealment after ~8 seconds. If the 8-second delay is acceptable, no firmware changes are needed.
 
+## v20 — First-Frame IDR Probe (2026-02-18)
+
+### Discovery: sub_FF8EDBE0(param=-1) IS an IDR encoder trigger
+
+Deeper analysis of the msg 6 handler (`sub_FF85D98C_my`) revealed that the **first frame** (frame_counter == 0) calls `sub_FF8EDBE0` with `param_13 = -1` (`MVN R2, #0`). Decompilation of `sub_FF8EDBE0` confirmed:
+
+- `param_13 == -1` → calls `FUN_ff8eda90(1)` → **triggers real IDR encoding** via JPCORE hardware
+- `param_13 == -2` → calls `FUN_ff8eda90(0)` → special frame mode
+- `param_13 >= 0` → calls `*(iVar1 + 0x6C)(param_13)` → normal P-frame write
+
+This means the firmware **already encodes an IDR on the very first msg 6 call**. But our spy hook (`spy_ring_write`) runs BEFORE `sub_FF8EDBE0` — we capture the raw ring buffer P-frame, missing the IDR output entirely.
+
+### Three concrete interception points identified
+
+| # | Location | When | What's there |
+|---|----------|------|-------------|
+| 1 | **After sub_FF8EDBE0(param=-1)** in msg 6 first-frame path | First msg 6 after pipeline start | IDR data at DMA+0x100040 (if JPCORE wrote it) |
+| 2 | **spy_msg5_debug** after msg 5 handler | When msg 5 fires (triggered by msg 4) | IDR data at DMA+0x100040 |
+| 3 | **Post msg 4** to movie_record_task queue | On demand from spy_idr_capture | Forces: stop pipeline → encode IDR → post msg 5 → restart pipeline |
+
+### Additional findings from agent analysis
+
+**SPS/PPS populated independently of msg 5**: `FUN_ff9300b4` (called from the msg 6 path) stores data at `rb_base+0xD8` and `rb_base+0xDC` on the first frame when ring buffer frame counter (`+0x24`) reaches 1. SPS/PPS byte count is accessible via `FUN_ff930ec0(*(rb_base + 0x8C))`.
+
+**Msg 4 posting requirements**: Message allocator `FUN_ff85e260()` returns a message struct pointer. Set `msg[0] = 4`, then call `FUN_ff8279ec(queue, msg, timeout, errstr, size)` where `queue = *(0x51A8 + 0x1C)`. Precondition: encoder handle at `*(0x51A8 + 0x7C)` must be non-zero, otherwise msg 4 handler exits immediately with error.
+
+### Implementation: `spy_first_frame_probe`
+
+Added a new C function hooked in the inline ASM at `loc_FF85DBD0` — fires AFTER the first `sub_FF8EDBE0(param=-1)` + `TakeSemaphore` succeeds. This is the first probe that reads DMA+0x100040 **after** the IDR-flagged encode completes.
+
+**ASM insertion point** (after `sub_FF8EDC88` cleanup, before frame pointer adjustment):
+```asm
+"loc_FF85DBD0:\n"
+"MOV     R0, #1\n"
+"BL      sub_FF8EDC88\n"
+"LDR     R0, [SP,#0x3C]\n"         // R0 = encoded_offset (bytes consumed)
+"BL      spy_first_frame_probe\n"   // Probe DMA+0x100040
+"LDR     R0, [SP,#0x3C]\n"         // Re-load (clobbered by BL)
+"LDR     R1, [SP,#0x34]\n"
+"ADD     LR, R1, R0\n"
+```
+
+Safe because: R0-R3 and LR are caller-saved (AAPCS). Next instructions load from SP-relative addresses, not register values. R4-R11 preserved by callee. LR is overwritten by `ADD LR, R1, R0` after the hook.
+
+**Debug frame output** (tagged "FRM1"):
+
+| Tag | Field | Purpose |
+|-----|-------|---------|
+| `EncO` | encoded_offset | Bytes consumed by sub_FF8EDBE0 as "IDR" portion. 0 = no-op |
+| `IBuf` | DMA+0x100040 | IDR buffer absolute address |
+| `IHd0`..`IHC_` | First 16 bytes at DMA+0x100040 | Real H.264 data if IDR was encoded, 0xFFFFFFFF if not |
+| `EncH` | *(0x51A8+0x7C) | Encoder handle — must be non-zero for msg 4 posting |
+| `SPSp` | *(rb_base+0x8C) | SPS/PPS related pointer in ring buffer struct |
+| `FCnt` | *(rb_base+0x24) | Ring buffer frame counter |
+| `DMAb` | *(rb_base+0xD0) | DMA region base address |
+
+**Expected debug output sequence**: Up to 4 debug frames:
+1. `MSG6` frame 1 — state before first sub_FF8EDBE0
+2. `FRM1` — state AFTER first sub_FF8EDBE0(param=-1) **(critical new probe)**
+3. `MSG6` frame 2 — state on second msg 6 call
+
+**Key diagnostics**:
+- `IHd0` at `FRM1` != 0xFFFFFFFF → **IDR data IS at DMA+0x100040** → can capture it
+- `EncO` > 0 → sub_FF8EDBE0 consumed bytes as IDR header data
+- `EncH` != 0 → msg 4 posting is viable (encoder handle valid)
+- `SPSp` != 0 → SPS/PPS extraction from ring buffer is possible
+
+**Build**: text=3088 (+416), data=0, bss=540 (unchanged). No new static variables.
+
 ## Future Ideas (Not Yet Implemented)
 
 ### Raw YUV Pipeline Streaming (640x480)

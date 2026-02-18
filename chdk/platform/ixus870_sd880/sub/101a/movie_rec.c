@@ -163,41 +163,77 @@ static void __attribute__((used,noinline)) spy_msg5_debug(void)
     }
 }
 
+// Probe AFTER first sub_FF8EDBE0(param=-1) returns — called from
+// loc_FF85DBD0 in inline asm.  At this point JPCORE has processed
+// the first frame with IDR flag; DMA+0x100040 may contain the IDR.
+// R0 = encoded_offset (SP+0x3C — bytes consumed by first encode).
+static void __attribute__((used,noinline)) spy_first_frame_probe(unsigned int encoded_offset)
+{
+    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
+    unsigned int rb_base, dma_base, idr_buf;
+    unsigned int ihd0, ihd4, ihd8, ihd12;
+    unsigned int enc_handle, sps_ptr, frm_cnt;
+
+    if (hdr[0] != 0x52455753) return;
+
+    rb_base    = *(volatile unsigned int *)0xFF93050C;
+    dma_base   = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD0) : 0;
+    idr_buf    = (dma_base > 0x01000000) ? dma_base + 0x100040 : 0;
+    enc_handle = *(volatile unsigned int *)(0x51A8 + 0x7C);
+    sps_ptr    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0x8C) : 0;
+    frm_cnt    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0x24) : 0;
+
+    ihd0  = idr_buf ? *(volatile unsigned int *)idr_buf : 0xDEADDEAD;
+    ihd4  = idr_buf ? *(volatile unsigned int *)(idr_buf + 4) : 0xDEADDEAD;
+    ihd8  = idr_buf ? *(volatile unsigned int *)(idr_buf + 8) : 0xDEADDEAD;
+    ihd12 = idr_buf ? *(volatile unsigned int *)(idr_buf + 12) : 0xDEADDEAD;
+
+    spy_debug_reset();
+    spy_debug_add('S','r','c','_', 0x46524D31);  // "FRM1" (first-frame probe)
+    spy_debug_add('E','n','c','O', encoded_offset); // Bytes consumed by sub_FF8EDBE0
+    spy_debug_add('I','B','u','f', idr_buf);
+    spy_debug_add('I','H','d','0', ihd0);          // First 16 bytes at DMA+0x100040
+    spy_debug_add('I','H','d','4', ihd4);
+    spy_debug_add('I','H','d','8', ihd8);
+    spy_debug_add('I','H','C','_', ihd12);
+    spy_debug_add('E','n','c','H', enc_handle);    // Encoder handle (must be !=0 for msg4)
+    spy_debug_add('S','P','S','p', sps_ptr);       // SPS/PPS related pointer (+0x8C)
+    spy_debug_add('F','C','n','t', frm_cnt);       // Ring buffer frame counter (+0x24)
+    spy_debug_add('D','M','A','b', dma_base);
+    spy_debug_send();
+}
+
 static int __attribute__((used,noinline)) spy_idr_capture(unsigned char *frame_ptr, unsigned int frame_size)
 {
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    unsigned int rb_base, idr_ptr_val, idr_size;
-    unsigned int dma_base, idr_buf, ihd0, ihd4;
+    unsigned int rb_base, dma_base, idr_buf;
+    unsigned int ihd0, ihd4, enc_handle;
 
-    (void)frame_ptr; (void)frame_size;  // passed from asm, not used in debug output
+    (void)frame_ptr; (void)frame_size;
 
     if (hdr[0] != 0x52455753) { idr_sent = 0; return 0; }
     idr_sent++;
 
-    // Send debug on frames 1-2 (before msg 5) and first frame after each msg 5
-    if (idr_sent > 2) {
-        if (msg5_done != 1 || idr_sent > 300) return 0;
-        msg5_done = 2;  // Consume flag — one msg 6 debug per msg 5 occurrence
-    }
+    // Only send debug on first 2 msg 6 calls
+    if (idr_sent > 2) return 0;
 
-    rb_base     = *(volatile unsigned int *)0xFF93050C;
-    idr_ptr_val = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD8) : 0;
-    idr_size    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xDC) : 0;
-    dma_base    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD0) : 0;
-    idr_buf     = (dma_base > 0x01000000) ? dma_base + 0x100040 : 0;
-    ihd0        = idr_buf ? *(volatile unsigned int *)idr_buf : 0xDEADDEAD;
-    ihd4        = idr_buf ? *(volatile unsigned int *)(idr_buf + 4) : 0xDEADDEAD;
+    rb_base    = *(volatile unsigned int *)0xFF93050C;
+    dma_base   = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD0) : 0;
+    idr_buf    = (dma_base > 0x01000000) ? dma_base + 0x100040 : 0;
+    enc_handle = *(volatile unsigned int *)(0x51A8 + 0x7C);
+    ihd0       = idr_buf ? *(volatile unsigned int *)idr_buf : 0xDEADDEAD;
+    ihd4       = idr_buf ? *(volatile unsigned int *)(idr_buf + 4) : 0xDEADDEAD;
 
     spy_debug_reset();
     spy_debug_add('S','r','c','_', 0x4D534736);   // "MSG6"
-    spy_debug_add('F','r','#','_', idr_sent);      // Frame number (msg 6 call count)
+    spy_debug_add('F','r','#','_', idr_sent);
     spy_debug_add('R','B','a','s', rb_base);
-    spy_debug_add('D','M','A','b', dma_base);      // DMA region base (rb_base + 0xD0)
-    spy_debug_add('I','B','u','f', idr_buf);       // IDR buffer = DMA base + 0x100040
-    spy_debug_add('I','H','d','0', ihd0);          // First 4 bytes at IDR buffer
-    spy_debug_add('I','H','d','4', ihd4);          // Bytes 4-7 at IDR buffer
-    spy_debug_add('I','d','r','P', idr_ptr_val);   // +0xD8 (MOV file offset)
-    spy_debug_add('I','d','r','S', idr_size);      // +0xDC (MOV file offset)
+    spy_debug_add('D','M','A','b', dma_base);
+    spy_debug_add('I','B','u','f', idr_buf);
+    spy_debug_add('I','H','d','0', ihd0);
+    spy_debug_add('I','H','d','4', ihd4);
+    spy_debug_add('E','n','c','H', enc_handle);    // Encoder handle for msg4
+    spy_debug_add('S','P','S','p', (rb_base) ? *(volatile unsigned int *)(rb_base + 0x8C) : 0);
     spy_debug_add('M','5','C','t', msg5_count);
     spy_debug_add('M','5','D','n', msg5_done);
     spy_debug_send();
@@ -487,7 +523,11 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
  "loc_FF85DBD0:\n"
                  "MOV     R0, #1\n"
                  "BL      sub_FF8EDC88\n"
-                 "LDR     R0, [SP,#0x3C]\n"
+                 // Probe DMA+0x100040 AFTER first sub_FF8EDBE0(param=-1)
+                 // At this point JPCORE processed the first frame with IDR flag
+                 "LDR     R0, [SP,#0x3C]\n"     // R0 = encoded_offset
+                 "BL      spy_first_frame_probe\n"
+                 "LDR     R0, [SP,#0x3C]\n"     // Re-load (clobbered by BL)
                  "LDR     R1, [SP,#0x34]\n"
                  "ADD     LR, R1, R0\n"
                  "LDR     R1, [SP,#0x30]\n"
