@@ -1176,11 +1176,89 @@ Sent 4 debug frames with 12 constant entries each (Frm#, TstA through TstK). All
 - No data corruption, no dropped frames, no reordering
 - Bridge-side parsing and display correct for all entry types
 
-### Key lessons
+### Key lessons (REVISED — see v22b below)
 
-1. **BSS size must remain stable at 532 bytes** — always include `bss_pad` or ensure enough static variables exist
+1. ~~**BSS size must remain stable at 532 bytes**~~ — see v22b: BSS theory was wrong
 2. **Debug frame protocol is 100% reliable** — previous crashes were NOT protocol bugs
-3. **When crashes have no logical code explanation, check BSS/data section sizes** — ARM embedded linkers are sensitive to section layout changes
+3. ~~**When crashes have no logical code explanation, check BSS/data section sizes**~~ — actual root cause was compiler-generated code for double indirection
+
+## v22b — Ring Buffer Reads Working via Hardcoded Addresses (2026-02-21)
+
+### BSS theory disproven
+
+Further testing showed that BSS=532 is necessary but NOT sufficient. The da53556 code (BSS=532, text=2140) that previously worked became unreliable — crashing consistently even after battery pulls. Meanwhile, the pure-constants test (BSS=532, text=2220) always works. The real problem was the **double indirection pattern** in the compiler output.
+
+### Root cause: Double indirection crashes the camera
+
+Reading struct fields via pointer indirection crashes the camera:
+```c
+// CRASHES — double indirection through volatile pointer
+spy_debug_add('R','B','c','4',
+    (*(volatile unsigned int *)0xFF93050C)
+        ? *(volatile unsigned int *)(*(volatile unsigned int *)0xFF93050C + 0xC4)
+        : 0);
+```
+
+The ARM compiler (arm-none-eabi-gcc) generates problematic code for nested volatile dereferences in ternary expressions. The exact failure mode is unclear (possible speculative read before condition check, or volatile ordering issue), but the crash is 100% reproducible.
+
+**Fix**: Use hardcoded absolute addresses instead of pointer indirection:
+```c
+// WORKS — direct address, no indirection
+// rb_base is always 0x8968, so rb_base+0xC4 = 0x8A2C
+spy_debug_add('R','B','c','4', *(volatile unsigned int *)0x8A2C);
+```
+
+### CRITICAL RULE: No double indirection in movie_rec.c
+
+**NEVER** dereference a pointer read from another pointer in `spy_idr_capture` or any spy function called from inline ASM context. Always use hardcoded addresses.
+
+| Pattern | Example | Result |
+|---------|---------|--------|
+| ROM read | `*(volatile unsigned int *)0xFF93050C` | **OK** |
+| RAM read (hardcoded) | `*(volatile unsigned int *)0x8A2C` | **OK** |
+| Double indirection | `*(*(0xFF93050C) + 0xC4)` | **CRASH** |
+| Local var indirection | `rb = *(0xFF93050C); *(rb + 0xC4)` | **CRASH** |
+
+The ring buffer struct base is always `0x8968` (from `*(0xFF93050C)`). All struct field addresses can be hardcoded:
+
+| Field | Offset | Hardcoded Address | Purpose |
+|-------|--------|-------------------|---------|
+| +0xC4 | rb_base+0xC4 | `0x8A2C` | Ring buffer data area base |
+| +0xD0 | rb_base+0xD0 | `0x8A38` | DMA base |
+| +0xD4 | rb_base+0xD4 | `0x8A3C` | AVCC pointer (current write position) |
+| +0xD8 | rb_base+0xD8 | `0x8A40` | IDR offset (past AVCC prefix) |
+| +0xDC | rb_base+0xDC | `0x8A44` | IDR size |
+
+### All struct fields successfully read
+
+With hardcoded addresses, all 6 ring buffer fields read correctly across 4 debug frames:
+
+```
+=== DEBUG FRAME #0 (first msg 6, before IDR) ===
+  RBas = 0x00008968       ← ring buffer struct (from ROM)
+  RBc4 = 0x41304720       ← data area base (uncached RAM)
+  IdrO = 0x00000000       ← IDR not yet written
+  IdrS = 0x00000000
+  RBd4 = 0x000158A8       ← AVCC pointer (first frame)
+  RBd0 = 0x02AD0000       ← DMA base
+
+=== DEBUG FRAME #1 (second msg 6, after IDR) ===
+  RBc4 = 0x41304720       ← unchanged
+  IdrO = 0x000158AC       ← IDR offset = RBd4_prev + 4 (skip AVCC prefix)
+  IdrS = 0x0000B5E0       ← IDR size: 46,560 bytes
+  RBd4 = 0x00020E8C       ← AVCC advanced to next frame
+  RBd0 = 0x02AD0000       ← unchanged
+```
+
+**IDR architecture confirmed**:
+- `+0xD4` (AVCC ptr) advances with each encoded frame
+- `+0xD8` (IDR offset) = initial `+0xD4` value + 4 (set once by msg 5, skips 4-byte AVCC length prefix)
+- `+0xDC` (IDR size) = ~46 KB, set once by msg 5
+- IDR absolute address = `0x41304720 + 0x158AC` = `0x4131FFCC` (uncached, CPU-readable)
+
+### Next step
+
+Read first 16 bytes at the computed IDR address (`0x41304720 + *(0x8A40)`) to verify H.264 IDR data. The data base is hardcoded but the offset must be read at runtime from `0x8A40`. This requires ONE level of indirection: read offset, add to constant, read from result. Build is ready but not yet deployed.
 
 ## Future Ideas (Not Yet Implemented)
 

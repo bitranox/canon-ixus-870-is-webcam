@@ -135,20 +135,31 @@ static int __attribute__((used,noinline)) spy_idr_capture(void)
     if (idr_sent >= 4) return 0;  // fire on first 4 msg 6 calls
     idr_sent++;
 
-    // Pure constants — test debug writer reliability
+    // Add one real read to constants baseline
     spy_debug_reset();
-    spy_debug_add('F','r','m','#', idr_sent);         // 1, 2, 3, or 4
-    spy_debug_add('T','s','t','A', 0xCAFEBABE);
-    spy_debug_add('T','s','t','B', 0x12345678);
-    spy_debug_add('T','s','t','C', 0xDEADBEEF);
-    spy_debug_add('T','s','t','D', 0xA5A5A5A5);
-    spy_debug_add('T','s','t','E', 0x55AA55AA);
-    spy_debug_add('T','s','t','F', 0x01020304);
-    spy_debug_add('T','s','t','G', 0xFFFF0000);
-    spy_debug_add('T','s','t','H', 0x00FF00FF);
-    spy_debug_add('T','s','t','I', 0x87654321);
-    spy_debug_add('T','s','t','J', 0xABCDEF01);
-    spy_debug_add('T','s','t','K', 0x10203040);
+    spy_debug_add('F','r','m','#', idr_sent);
+    spy_debug_add('R','B','a','s', *(volatile unsigned int *)0xFF93050C);  // ring buffer struct ptr
+    spy_debug_add('R','B','c','4', *(volatile unsigned int *)0x8A2C);     // rb_base+0xC4: data area base
+    spy_debug_add('I','d','r','O', *(volatile unsigned int *)0x8A40);     // rb_base+0xD8: IDR offset
+    spy_debug_add('I','d','r','S', *(volatile unsigned int *)0x8A44);     // rb_base+0xDC: IDR size
+    spy_debug_add('R','B','d','4', *(volatile unsigned int *)0x8A3C);     // rb_base+0xD4: AVCC ptr
+    spy_debug_add('R','B','d','4', *(volatile unsigned int *)0x8A3C);     // rb_base+0xD4: AVCC ptr
+    spy_debug_add('R','B','d','0', *(volatile unsigned int *)0x8A38);     // rb_base+0xD0: DMA base
+    {
+        unsigned int idr_off = *(volatile unsigned int *)0x8A40;
+        unsigned int idr_abs = 0x41304720 + idr_off;  // hardcoded data base + offset
+        if (idr_off && idr_off < 0x00200000) {  // sanity: offset < 2MB
+            spy_debug_add('D','a','t','0', *(volatile unsigned int *)(idr_abs));
+            spy_debug_add('D','a','t','4', *(volatile unsigned int *)(idr_abs + 4));
+            spy_debug_add('D','a','t','8', *(volatile unsigned int *)(idr_abs + 8));
+            spy_debug_add('D','a','t','C', *(volatile unsigned int *)(idr_abs + 12));
+        } else {
+            spy_debug_add('D','a','t','0', 0xDEADDEAD);
+            spy_debug_add('D','a','t','4', 0xDEADDEAD);
+            spy_debug_add('D','a','t','8', 0xDEADDEAD);
+            spy_debug_add('D','a','t','C', 0xDEADDEAD);
+        }
+    }
     spy_debug_send();
 
     return 0;

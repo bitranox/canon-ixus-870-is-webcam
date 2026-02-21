@@ -7,6 +7,7 @@
 - **Run bridge with `--timeout 20 --no-preview --no-webcam`** during firmware development (graceful shutdown after 20s, no virtual webcam needed).
 - **Commit after each bridge test** with a message that describes what was tested and what the result was.
 - **Use the debug frame protocol** (`spy_debug_reset/add/send`) in `movie_rec.c` for all camera→bridge diagnostic output. Do NOT inject debug data into H.264 frames. See [Debug Frame Protocol](docs/debug-frame-protocol.md) for API reference and payload format.
+- **No double indirection in movie_rec.c**: NEVER dereference a pointer read from another pointer (e.g. `*(*(0xFF93050C) + 0xC4)`). The ARM compiler generates code that crashes the camera. Use hardcoded addresses instead. The ring buffer struct is always at `0x8968` — see [v22b in dev log](docs/webcam-development-log.md) for the address table.
 
 ## Project Overview
 
