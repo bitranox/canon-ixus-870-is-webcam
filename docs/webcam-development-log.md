@@ -1303,7 +1303,67 @@ Frame 3 Dr20 = 0x24940000 — valid P-frame AVCC data (big-endian length 0x00009
 | @IdrO absolute | 0x000158AC | 0x00 (v18 PTP probe) |
 | Cached mirror | 0x0131FFCC | CRASH |
 
-**Next step**: Read ROM constant at `0xFF85D6A4` to find the actual DMA context base used by msg 5. Then compute `*DAT_ff85d6a4 + 0x200040 + FUN_ffa19c98()` to find where JPCORE writes the IDR output. Alternatively, hook inside msg 5 to capture the IDR data pointer before it's consumed.
+### Three approaches to find IDR data
+
+**Option 1 — Trace the DMA context base (ROM pointer chain)**
+
+Read the ROM constant at `0xFF85D6A4` to find the movie record context base. From Ghidra decompilation of msg 5 (`FUN_ff85d3bc`):
+
+```c
+iVar2 = *DAT_ff85d6a4;                          // movie record context base
+uVar3 = FUN_ff930b04(iVar2 + 0x200040);          // init ring buffer data area
+FUN_ff8eddfc(uVar3, iVar2 + 0x100040, ...);      // JPCORE encodes IDR into uVar3
+```
+
+The IDR output buffer is `FUN_ffa19c98() + *DAT_ff85d6a4 + 0x200040`. Steps:
+1. Read `*(0xFF85D6A4)` — ROM constant giving RAM address of context pointer
+2. In next build, read from that RAM address (hardcoded) to get `*DAT_ff85d6a4`
+3. Compute `base + 0x200040` — this is the data area where JPCORE writes the IDR
+4. Also read `*(0xFF930C78)` — ROM pointer to `*DAT_ff930c78` (set by FUN_ff930b04, stores the data area base used by MOV writer FUN_ff930b20)
+5. Read `FUN_ffa19c98()` return value (header/alignment offset added to data area base)
+
+Complexity: 2-3 builds (ROM pointer → RAM address → data area → IDR). Low risk.
+
+**Option 2 — Hook inside msg 5 (inline assembly)**
+
+Add an inline assembly hook INSIDE the msg 5 handler (`FUN_ff85d3bc`), between encoding completion (`FUN_ff8274b4` semaphore wait) and recording pipeline start (`sub_FF8C3BFC`). At this point the IDR is freshly encoded and P-frames haven't started overwriting it.
+
+From the msg 5 handler:
+```
+FF85D3BC: ... (function entry)
+  FUN_ff930b04     → init ring buffer
+  FUN_ff8eddfc     → JPCORE encodes IDR
+  FUN_ff8274b4     → wait for encoding (1s timeout)
+  <<<< HOOK HERE: IDR data is valid, no P-frames yet >>>>
+  sub_FF8C3BFC     → start recording pipeline (P-frames begin)
+  FUN_ff93048c     → read IDR ptr/size from ring buffer struct
+  FUN_ff930b20     → write IDR to MOV container
+```
+
+The hook would call `spy_ring_write(idr_ptr, idr_size)` to deliver the IDR frame via the existing P-frame delivery path. Need to find exact ROM addresses for the BL insertion point.
+
+Complexity: Medium — requires disassembly of msg 5 handler, finding safe BL insertion point, managing register state. Risk of FPS regression (previous C wrapper attempt caused severe regression).
+
+**Option 3 — Synthetic IDR construction**
+
+Instead of capturing the real IDR from the encoder, construct a synthetic IDR frame on the PC bridge side:
+
+1. We already have SPS+PPS (hardcoded from a real MOV file, 28 bytes avcC)
+2. Generate a minimal IDR slice: NAL type 5 (0x65), slice header with `first_mb_in_slice=0`, `slice_type=7` (I-slice), `frame_num=0`, `pic_order_cnt=0`, then all-gray macroblock data (DC-only, no residual)
+3. Feed this synthetic IDR to FFmpeg before the first P-frame arrives
+4. FFmpeg initializes its reference picture, then subsequent P-frames decode normally
+
+The synthetic IDR wouldn't match the camera's actual first frame visually, but it would allow the decoder to sync immediately instead of waiting ~8 seconds. After a few P-frames, the visual output would converge to the real scene.
+
+Complexity: Requires understanding H.264 slice header bitstream encoding (exp-Golomb, CABAC/CAVLC). Medium risk — if the synthetic IDR's parameters don't match the encoder's expectations, P-frame decoding may produce artifacts.
+
+### v23c — ROM pointer probe (starting option 1)
+
+Read ROM constants to trace the DMA context pointer chain:
+- `*(0xFF85D6A4)` — RAM address of movie record context base pointer
+- `*(0xFF930C78)` — RAM address of data area base (set by FUN_ff930b04)
+
+These are ROM reads (safe, no DMA/uncached issues). The values tell us which RAM addresses to hardcode in the next build.
 
 ## Future Ideas (Not Yet Implemented)
 

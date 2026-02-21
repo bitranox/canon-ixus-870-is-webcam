@@ -130,44 +130,21 @@ static void __attribute__((used,noinline)) spy_msg5_debug(void)
 static int __attribute__((used,noinline)) spy_idr_capture(void)
 {
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    unsigned int idr_off, data_c0, data_c4, rb20_val, data_rb20;
 
     if (hdr[0] != 0x52455753) { idr_sent = 0; return 0; }
     idr_sent++;
-    if (idr_sent != 2 && idr_sent != 3) return 0;  // Only after IDR written
-
-    idr_off = *(volatile unsigned int *)0x8A40;     // +0xD8: IDR offset
-
-    // Read from RBc0 + IdrO  (0x412C4720 + idr_off)
-    if (idr_off != 0 && idr_off < 0x200000) {
-        data_c0 = *(volatile unsigned int *)(0x412C4720 + idr_off);
-    } else {
-        data_c0 = 0xDEADDEAD;
-    }
-
-    // Read from RBc4 + IdrO  (0x41304720 + idr_off) — known 0xFFFFFFFF, confirm
-    if (idr_off != 0 && idr_off < 0x200000) {
-        data_c4 = *(volatile unsigned int *)(0x41304720 + idr_off);
-    } else {
-        data_c4 = 0xDEADDEAD;
-    }
-
-    // Read from RB20 pointer directly
-    rb20_val = *(volatile unsigned int *)0x8988;    // +0x20 value
-    if (rb20_val >= 0x41000000 && rb20_val < 0x42000000) {
-        data_rb20 = *(volatile unsigned int *)rb20_val;
-    } else {
-        data_rb20 = 0xDEADDEAD;
-    }
+    if (idr_sent != 2) return 0;  // One frame only
 
     spy_debug_reset();
     spy_debug_add('F','r','m','#', idr_sent);
-    spy_debug_add('I','d','r','O', idr_off);
-    spy_debug_add('I','d','r','S', *(volatile unsigned int *)0x8A44);
-    spy_debug_add('D','c','0','_', data_c0);       // Data at RBc0 + IdrO
-    spy_debug_add('D','c','4','_', data_c4);       // Data at RBc4 + IdrO
-    spy_debug_add('R','B','2','0', rb20_val);
-    spy_debug_add('D','r','2','0', data_rb20);     // Data at RB20 ptr
+    // ROM pointers — safe reads from firmware ROM
+    spy_debug_add('R','M','a','4', *(volatile unsigned int *)0xFF85D6A4);  // DAT_ff85d6a4: addr of context base
+    spy_debug_add('R','M','c','8', *(volatile unsigned int *)0xFF930C78);  // DAT_ff930c78: addr of data area ptr
+    spy_debug_add('R','M','0','c', *(volatile unsigned int *)0xFF93050C);  // DAT_ff93050c: addr of rb struct (verify: should point to 0x8968)
+    // Ring buffer struct fields for reference
+    spy_debug_add('I','d','r','O', *(volatile unsigned int *)0x8A40);      // +0xD8: IDR offset
+    spy_debug_add('I','d','r','S', *(volatile unsigned int *)0x8A44);      // +0xDC: IDR size
+    spy_debug_add('R','B','d','0', *(volatile unsigned int *)0x8A38);      // +0xD0: DMA base
     spy_debug_send();
 
     return 0;
