@@ -1045,6 +1045,93 @@ Safe because: R0-R3 and LR are caller-saved (AAPCS). Next instructions load from
 
 **Build**: text=3088 (+416), data=0, bss=540 (unchanged). No new static variables.
 
+## v21 — DMA+0x100040 Crash & Safe Metadata Probe (2026-02-21)
+
+### Critical finding: DMA+0x100040 is NOT readable
+
+Reading from `DMA_base + 0x100040` (= `0x02AD0000 + 0x100040` = `0x02BD0040`) causes a **data abort** on the ARM926EJ-S, crashing the recording task. This was tested in three different contexts:
+
+1. **`spy_first_frame_probe` in inline ASM** (after `sub_FF8EDC88`): Camera started recording, hung at 0" — data abort during first frame processing
+2. **`spy_idr_capture` in msg 6 handler**: Camera didn't even start recording — data abort during first msg 6 call
+3. **`spy_msg5_debug` in msg 5 handler**: Not tested independently (removed along with other DMA reads)
+
+The DMA buffer at offset 0x100040 is likely mapped with restricted access permissions (e.g., DMA-only, not CPU-readable), or the offset 0x100040 is beyond the allocated buffer size.
+
+**Lesson**: Never dereference DMA buffer addresses from CPU code. Only read metadata (offsets, sizes, pointers) from the ring buffer struct — not the DMA buffer contents directly.
+
+### Reverted to known-good base (commit a332449)
+
+After 3 consecutive boot failures with DMA reads, reverted `movie_rec.c` to the last working commit (`a332449` — "Multi-point debug: IDR ptr populated by 2nd msg 6") and incrementally added only safe metadata reads.
+
+### Safe metadata probe results
+
+Enhanced `spy_idr_capture` (msg 6 handler) to report additional metadata without reading DMA buffers:
+
+**Debug Frame #0 — M6.1 (first msg 6, before msg 5):**
+
+| Field | Value | Meaning |
+|-------|-------|---------|
+| `RBas` | `0x00008968` | Ring buffer struct base |
+| `DMAb` | `0x02AD0000` | DMA region base address |
+| `IdrP` | `0x00000000` | IDR pointer — not yet written |
+| `IdrS` | `0x00000000` | IDR size — not yet written |
+| `DatP` | `0xDEADDEAD` | Data at IdrP — N/A (ptr is 0) |
+| `EncH` | `0x0001AF28` | **Encoder handle — VALID** (msg 4 posting possible) |
+| `SPSp` | `0x00000280` | SPS-related value at rb_base+0x8C (likely offset: 640) |
+| `FCnt` | `0x00000000` | Frame counter = 0 (first frame) |
+| `M5Ct` | `0x00000000` | msg 5 count = 0 (hasn't fired) |
+| `M5Dn` | `0x00000000` | msg 5 done = 0 |
+
+**Debug Frame #1 — M6.2 (second msg 6):**
+
+| Field | Value | Meaning |
+|-------|-------|---------|
+| `RBas` | `0x00008968` | Same ring buffer struct |
+| `DMAb` | `0x02AD0000` | Same DMA base |
+| `IdrP` | `0x000158AC` | **IDR pointer populated** (offset, not absolute) |
+| `IdrS` | `0x0000B6B0` | **IDR size = 46,768 bytes** |
+| `DatP` | `0x00000000` | Data at IdrP = 0 (it's an offset, not a valid RAM pointer) |
+| `EncH` | `0x0001AF28` | Encoder handle still valid |
+| `SPSp` | `0x00000280` | SPS offset unchanged |
+| `FCnt` | `0x00000001` | Frame counter = 1 |
+| `M5Ct` | `0x00000000` | msg 5 still hasn't fired |
+| `M5Dn` | `0x00000000` | msg 5 still hasn't fired |
+
+### Key conclusions
+
+1. **Encoder handle is valid from the first msg 6**: `EncH = 0x0001AF28` — msg 4 posting is possible
+2. **IdrP is an OFFSET, not an absolute pointer**: Value `0x158AC` is too small to be a RAM address. The bridge's memory probe confirmed:
+   - `@IdrP 0x000158AC`: all zeros (unmapped low memory)
+   - `@DMAb+IdrP 0x02AE58AC`: all `0xFFFFFFFF` (DMA region — not CPU-readable!)
+   - `@(+0xC0)+IdrP 0x412D9FCC`: all `0xFFFFFFFF` (out of range)
+3. **DMA region is NOT CPU-readable**: Any attempt to read from the 0x02ADxxxx range causes a data abort
+4. **msg 5 never fires during webcam mode**: Both frames show `M5Ct=0`, `M5Dn=0` — the periodic IDR re-encode (triggered by msg 4→msg 5) doesn't happen during our webcam pipeline
+5. **SPSp = 0x280 = 640**: This matches the horizontal resolution (640 pixels). It's likely a resolution parameter, not a pointer to SPS/PPS data
+
+### What IdrP offset means
+
+The IDR pointer at `rb_base+0xD8` = `0x158AC` is an offset within the **MOV file's mdat atom**, not a RAM address. During normal recording:
+- The H.264 encoder writes IDR data into the DMA buffer
+- The file writer reads from DMA and writes to the MOV file on the SD card
+- `+0xD8` records the file offset where the IDR was written, so the MOV muxer can create the index
+
+This means **the IDR data itself is only transiently present in DMA memory during encoding** — it's written by JPCORE hardware, read by the file writer DMA, and never accessible to CPU code.
+
+### Implications for IDR capture
+
+The IDR data flows through a hardware-only path:
+```
+JPCORE encoder → DMA buffer → SD card file writer
+                     ↑
+              NOT CPU-accessible
+```
+
+To capture IDR data for webcam streaming, we need a fundamentally different approach:
+- **Option A**: Intercept at JPCORE output before DMA (requires understanding JPCORE register interface)
+- **Option B**: Post msg 4 to trigger IDR encoding, redirect output to a CPU-readable buffer
+- **Option C**: Use the SPS/PPS from a pre-recorded MOV file + feed P-frames only (current approach with ~8s sync delay)
+- **Option D**: Configure JPCORE to produce periodic IDR frames in the P-frame ring buffer path
+
 ## Future Ideas (Not Yet Implemented)
 
 ### Raw YUV Pipeline Streaming (640x480)

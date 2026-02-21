@@ -39,11 +39,6 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
 
     hdr[1] = (unsigned int)ptr;        // Source pointer (ring buffer address)
     hdr[2] = size;                     // Frame data size
-
-    /* ARM926EJ-S: Drain Write Buffer — ensure ptr+size are committed
-       before the frame counter becomes visible to the consumer. */
-    { int _zero = 0; asm volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(_zero) : "memory"); }
-
     hdr[3]++;                          // Frame counter (incremented LAST)
 
     sem_handle = hdr[5];
@@ -116,21 +111,12 @@ static void spy_debug_send(void)
     for (i = 0; i < dbg_build_len; i++)
         slot[4 + i] = dbg_build_buf[i];
 
-    /* ARM926EJ-S (ARMv5): Drain Write Buffer — ensures all slot data
-       stores are committed to memory before the write index update
-       becomes visible to the consumer in webcam.c. volatile alone
-       does NOT prevent hardware write buffer reordering on ARM. */
-    { int _zero = 0; asm volatile("mcr p15, 0, %0, c7, c10, 4" :: "r"(_zero) : "memory"); }
-
-    hdr[8] = next_wr;  // Advance write index LAST
+    hdr[8] = next_wr;  // Advance write index LAST (memory barrier via volatile)
 }
 
 static void __attribute__((used,noinline)) spy_msg5_debug(void)
 {
-    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
     unsigned int rb_base = *(volatile unsigned int *)0xFF93050C;
-    unsigned int dma_base, idr_buf, ihd0, ihd4;
-
     msg5_count++;
     msg5_rb_base = rb_base;
     if (rb_base != 0) {
@@ -138,102 +124,38 @@ static void __attribute__((used,noinline)) spy_msg5_debug(void)
         msg5_idr_size = *(volatile unsigned int *)(rb_base + 0xDC);
     }
     msg5_done = 1;  // Signal that IDR encoding is complete
-
-    // Send debug frame from msg 5 context (first occurrence only).
-    // sub_FF85D3BC (IDR encoding) is synchronous — data at DMA base + 0x100040
-    // should be fully written by the time we get here.
-    if (hdr[0] == 0x52455753 && msg5_count <= 1) {
-        dma_base = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD0) : 0;
-        idr_buf  = (dma_base > 0x01000000) ? dma_base + 0x100040 : 0;
-        ihd0     = idr_buf ? *(volatile unsigned int *)idr_buf : 0xDEADDEAD;
-        ihd4     = idr_buf ? *(volatile unsigned int *)(idr_buf + 4) : 0xDEADDEAD;
-
-        spy_debug_reset();
-        spy_debug_add('S','r','c','_', 0x4D534735);  // "MSG5"
-        spy_debug_add('R','B','a','s', rb_base);
-        spy_debug_add('D','M','A','b', dma_base);
-        spy_debug_add('I','B','u','f', idr_buf);      // DMA base + 0x100040
-        spy_debug_add('I','H','d','0', ihd0);         // First 4 bytes at IDR buffer
-        spy_debug_add('I','H','d','4', ihd4);         // Bytes 4-7 (NAL byte area)
-        spy_debug_add('I','d','r','P', msg5_idr_ptr); // +0xD8 (MOV file offset)
-        spy_debug_add('I','d','r','S', msg5_idr_size); // +0xDC (MOV file offset)
-        spy_debug_add('M','5','C','t', msg5_count);
-        spy_debug_add('M','6','C','t', idr_sent);     // How many msg 6 calls so far
-        spy_debug_send();
-    }
 }
 
-// Probe AFTER first sub_FF8EDBE0(param=-1) returns — called from
-// loc_FF85DBD0 in inline asm.  At this point JPCORE has processed
-// the first frame with IDR flag; DMA+0x100040 may contain the IDR.
-// R0 = encoded_offset (SP+0x3C — bytes consumed by first encode).
-static void __attribute__((used,noinline)) spy_first_frame_probe(unsigned int encoded_offset)
+static int __attribute__((used,noinline)) spy_idr_capture(void)
 {
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    unsigned int rb_base, dma_base, idr_buf;
-    unsigned int ihd0, ihd4, ihd8, ihd12;
-    unsigned int enc_handle, sps_ptr, frm_cnt;
-
-    if (hdr[0] != 0x52455753) return;
-
-    rb_base    = *(volatile unsigned int *)0xFF93050C;
-    dma_base   = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD0) : 0;
-    idr_buf    = (dma_base > 0x01000000) ? dma_base + 0x100040 : 0;
-    enc_handle = *(volatile unsigned int *)(0x51A8 + 0x7C);
-    sps_ptr    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0x8C) : 0;
-    frm_cnt    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0x24) : 0;
-
-    ihd0  = idr_buf ? *(volatile unsigned int *)idr_buf : 0xDEADDEAD;
-    ihd4  = idr_buf ? *(volatile unsigned int *)(idr_buf + 4) : 0xDEADDEAD;
-    ihd8  = idr_buf ? *(volatile unsigned int *)(idr_buf + 8) : 0xDEADDEAD;
-    ihd12 = idr_buf ? *(volatile unsigned int *)(idr_buf + 12) : 0xDEADDEAD;
-
-    spy_debug_reset();
-    spy_debug_add('S','r','c','_', 0x46524D31);  // "FRM1" (first-frame probe)
-    spy_debug_add('E','n','c','O', encoded_offset); // Bytes consumed by sub_FF8EDBE0
-    spy_debug_add('I','B','u','f', idr_buf);
-    spy_debug_add('I','H','d','0', ihd0);          // First 16 bytes at DMA+0x100040
-    spy_debug_add('I','H','d','4', ihd4);
-    spy_debug_add('I','H','d','8', ihd8);
-    spy_debug_add('I','H','C','_', ihd12);
-    spy_debug_add('E','n','c','H', enc_handle);    // Encoder handle (must be !=0 for msg4)
-    spy_debug_add('S','P','S','p', sps_ptr);       // SPS/PPS related pointer (+0x8C)
-    spy_debug_add('F','C','n','t', frm_cnt);       // Ring buffer frame counter (+0x24)
-    spy_debug_add('D','M','A','b', dma_base);
-    spy_debug_send();
-}
-
-static int __attribute__((used,noinline)) spy_idr_capture(unsigned char *frame_ptr, unsigned int frame_size)
-{
-    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    unsigned int rb_base, dma_base, idr_buf;
-    unsigned int ihd0, ihd4, enc_handle;
-
-    (void)frame_ptr; (void)frame_size;
+    unsigned int rb_base, idr_ptr_val, idr_size, data_at_ptr;
+    unsigned int dma_base, enc_handle, sps_ptr, frm_cnt;
 
     if (hdr[0] != 0x52455753) { idr_sent = 0; return 0; }
+    if (idr_sent >= 2) return 0;  // fire on first 2 msg 6 calls
     idr_sent++;
 
-    // Only send debug on first 2 msg 6 calls
-    if (idr_sent > 2) return 0;
-
-    rb_base    = *(volatile unsigned int *)0xFF93050C;
-    dma_base   = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD0) : 0;
-    idr_buf    = (dma_base > 0x01000000) ? dma_base + 0x100040 : 0;
-    enc_handle = *(volatile unsigned int *)(0x51A8 + 0x7C);
-    ihd0       = idr_buf ? *(volatile unsigned int *)idr_buf : 0xDEADDEAD;
-    ihd4       = idr_buf ? *(volatile unsigned int *)(idr_buf + 4) : 0xDEADDEAD;
+    rb_base     = *(volatile unsigned int *)0xFF93050C;
+    idr_ptr_val = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD8) : 0;
+    idr_size    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xDC) : 0;
+    data_at_ptr = (idr_ptr_val && idr_ptr_val < 0x40000000)
+                  ? *(volatile unsigned int *)idr_ptr_val : 0xDEADDEAD;
+    dma_base    = (rb_base) ? *(volatile unsigned int *)(rb_base + 0xD0) : 0;
+    enc_handle  = *(volatile unsigned int *)(0x51A8 + 0x7C);
+    sps_ptr     = (rb_base) ? *(volatile unsigned int *)(rb_base + 0x8C) : 0;
+    frm_cnt     = (rb_base) ? *(volatile unsigned int *)(rb_base + 0x24) : 0;
 
     spy_debug_reset();
-    spy_debug_add('S','r','c','_', 0x4D534736);   // "MSG6"
-    spy_debug_add('F','r','#','_', idr_sent);
+    spy_debug_add('S','r','c','_', (idr_sent == 1) ? 0x4D362E31 : 0x4D362E32);
     spy_debug_add('R','B','a','s', rb_base);
     spy_debug_add('D','M','A','b', dma_base);
-    spy_debug_add('I','B','u','f', idr_buf);
-    spy_debug_add('I','H','d','0', ihd0);
-    spy_debug_add('I','H','d','4', ihd4);
-    spy_debug_add('E','n','c','H', enc_handle);    // Encoder handle for msg4
-    spy_debug_add('S','P','S','p', (rb_base) ? *(volatile unsigned int *)(rb_base + 0x8C) : 0);
+    spy_debug_add('I','d','r','P', idr_ptr_val);
+    spy_debug_add('I','d','r','S', idr_size);
+    spy_debug_add('D','a','t','P', data_at_ptr);
+    spy_debug_add('E','n','c','H', enc_handle);
+    spy_debug_add('S','P','S','p', sps_ptr);
+    spy_debug_add('F','C','n','t', frm_cnt);
     spy_debug_add('M','5','C','t', msg5_count);
     spy_debug_add('M','5','D','n', msg5_done);
     spy_debug_send();
@@ -390,16 +312,14 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "MOVS    R8, R0\n"
                  "BNE     loc_FF85DA40\n"
 
-                // Debug + frame delivery: pass frame ptr/size to spy_idr_capture
-                "LDR     R0, [SP, #0x34]\n"    // R0 = frame_ptr from sub_FF92FE8C
-                "LDR     R1, [SP, #0x30]\n"    // R1 = frame_size
-                "BL      spy_idr_capture\n"    // spy_idr_capture(ptr, size) — sends debug frame
+                // One-shot IDR capture: on first frame, send IDR instead of P-frame
+                "BL      spy_idr_capture\n"    // Returns 1 if IDR was sent
                 "CMP     R0, #0\n"
-                "BNE     loc_FF85DA24\n"       // Skip spy_ring_write if non-zero return
-                // Normal frame delivery
-                "LDR     R0, [SP, #0x34]\n"    // R0 = frame_ptr
-                "LDR     R1, [SP, #0x30]\n"    // R1 = frame_size
-                "BL      spy_ring_write\n"     // Send frame to webcam module
+                "BNE     loc_FF85DA24\n"       // Skip P-frame if IDR was sent
+                // Normal P-frame delivery
+                "LDR     R0, [SP, #0x34]\n"    // R0 = jpeg_ptr from sub_FF92FE8C
+                "LDR     R1, [SP, #0x30]\n"    // R1 = jpeg_size
+                "BL      spy_ring_write\n"     // Send P-frame
 
  "loc_FF85DA24:\n"
                  "LDR     R0, [R6,#0x2C]\n"
@@ -523,11 +443,7 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
  "loc_FF85DBD0:\n"
                  "MOV     R0, #1\n"
                  "BL      sub_FF8EDC88\n"
-                 // Probe DMA+0x100040 AFTER first sub_FF8EDBE0(param=-1)
-                 // At this point JPCORE processed the first frame with IDR flag
-                 "LDR     R0, [SP,#0x3C]\n"     // R0 = encoded_offset
-                 "BL      spy_first_frame_probe\n"
-                 "LDR     R0, [SP,#0x3C]\n"     // Re-load (clobbered by BL)
+                 "LDR     R0, [SP,#0x3C]\n"
                  "LDR     R1, [SP,#0x34]\n"
                  "ADD     LR, R1, R0\n"
                  "LDR     R1, [SP,#0x30]\n"
