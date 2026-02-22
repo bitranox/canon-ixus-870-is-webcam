@@ -1927,7 +1927,12 @@ The first no-decode test (120 frames, 6 FPS) was run with the **wrong firmware**
 
 ### Remaining bottleneck: camera PTP task latency
 
-To go beyond ~21 FPS, we need to reduce the camera-side cycle time. Options to explore:
-- Remove msleep(10) and read from uncached memory alias (0x40000000 | addr) — bypasses CPU cache entirely, no eviction delay needed
-- Find a way to invalidate CPU cache lines directly (no known DryOS API)
+~21 FPS appears to be the ceiling with the current approach. Already-proven-failed options:
+- Uncached memory alias (0x40000000 | addr) — bus contention stalls recording after ~5s (tested v24)
+- Cache invalidation MCR instructions — crashes/stalls recording pipeline (tested v24)
+- Memcpy inside spy_ring_write — reads zeros, stalls pipeline (tested v24)
+
+Unexplored options:
+- DMA-to-DMA copy — would bypass cache but no known DryOS DMA copy API
 - Reduce PTP task scheduling overhead (unlikely — DryOS internal)
+- Double-buffered approach: copy into a second buffer from a low-priority task
