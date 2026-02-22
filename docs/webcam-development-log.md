@@ -1613,3 +1613,15 @@ Reviewed the optimized firmware for correctness:
 - **movie_rec.c**: Register usage safe (R0-R3 clobbered by BL, overwritten by subsequent instructions). Volatile store ordering correct (data first, counter last, then semaphore). STATE 3→4 promotion handles both fresh and already-promoted states.
 - **webcam.c**: All memcpy bounded by SPY_BUF_SIZE. AVCC parser has length/type validation. Shutdown ordering safe (magic cleared → 50ms sleep → stop recording → delete semaphore). Semaphore lifecycle correct (created in start, stored in spy header, deleted in stop).
 - **No regressions**: Every code path in the H.264 pipeline preserved exactly.
+
+### Test result (2026-02-22)
+
+Deployed optimized firmware and ran bridge with `--timeout 20 --no-preview --no-webcam`:
+
+- **IDR injection works**: First frame 47804 bytes (NAL 0x65), decoded OK
+- **P-frame decoding works**: First 5 frames all decode successfully (NAL 0x61, ~36-37 KB)
+- **Peak FPS**: 28.6 FPS (one interval hit 57.7 — likely a stats anomaly from burst after recovery)
+- **Sustained FPS**: 14.8-15.8 FPS in active intervals
+- **Clean shutdown**: Recording stopped properly, camera returned to playback
+
+**Problem observed**: After initial burst of ~5 decoded frames, decoder loses sync and enters IDR re-injection loop. Re-injection fires repeatedly but doesn't fully recover. FPS drops to 0 during these periods, then occasionally recovers for another burst. This is a pre-existing issue — same pattern as before the dead code cleanup. Root cause: P-frame continuity loss (missing a single P-frame makes all subsequent P-frames undecodable until the next IDR).
