@@ -8,10 +8,10 @@ void  set_quality(int *x){ // -17 highest; +12 lowest
 }
 
 
-// Store H.264 frame pointer and signal semaphore (seqlock protocol).
+// Store H.264 frame pointer+size using seqlock protocol.
 // Called from sub_FF85D98C_my after sub_FF92FE8C returns each encoded frame.
-// Does NOT copy data — just stores the ring buffer pointer for the webcam module
-// to read directly via its own memcpy.
+// Does NOT copy data — stores the ring buffer pointer for webcam.c to read
+// via the uncacheable memory alias (0x40000000 | addr).
 //
 // Seqlock protocol: hdr[3] is incremented BEFORE and AFTER writing ptr+size.
 // Reader checks hdr[3] before and after memcpy: if it changed or is odd,
@@ -22,7 +22,6 @@ void  set_quality(int *x){ // -17 highest; +12 lowest
 //   [1] src_ptr  = ring buffer pointer (written here, read by webcam.c)
 //   [2] size     = frame data size (written here)
 //   [3] seq      = seqlock counter (odd = write in progress, even = stable)
-//   [5] sem      = semaphore handle (set by webcam.c)
 static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, unsigned int size)
 {
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;

@@ -70,15 +70,13 @@ static int idr_injected = 0;
 // ============================================================
 // Spy buffer: shared with movie_rec.c frame interceptor
 // webcam.c initializes the header; movie_rec.c's spy_ring_write
-// copies frame data into the buffer and signals the semaphore.
+// stores frame pointer+size using seqlock protocol.
 // ============================================================
 #define WEBCAM_SPY_ADDR    ((volatile unsigned int *)0x000FF000)
 // spy[0] = magic (0x52455753 = active, set by webcam.c)
 // spy[1] = src_ptr (ring buffer pointer, set by movie_rec.c)
 // spy[2] = size    (frame data size, set by movie_rec.c)
 // spy[3] = seq     (seqlock counter: odd=writing, even=stable)
-// spy[4] = (unused)
-// spy[5] = (unused)
 
 // ============================================================
 // H.264 frame capture from recording spy buffer
@@ -223,7 +221,6 @@ static int capture_frame_h264(void)
     // Poll for new frame with seqlock consistency check (max ~100ms).
     // msleep(1) between attempts allows other DryOS tasks to run and
     // naturally evict CPU cache lines containing stale DMA data.
-    // This solves the cache coherency issue without explicit invalidation.
     {
         static unsigned int last_seq = 0;
         int polls;
@@ -406,7 +403,7 @@ static int webcam_start(int jpeg_quality)
     // Wait for video pipeline to stabilize before starting recording.
     msleep(500);
 
-    // Allocate spy buffer data area for frame capture.
+    // Allocate frame data buffer for local parsing.
     if (!frame_data_buf) {
         frame_data_buf = malloc(SPY_BUF_SIZE);
     }

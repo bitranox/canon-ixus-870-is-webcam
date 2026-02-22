@@ -1743,9 +1743,26 @@ Removed GiveSemaphore from movie_rec.c — the seqlock counter is sufficient for
 
 **Analysis**: msleep(1) allows SOME cache lines to be evicted, but a 40KB frame spans ~1250 cache lines (32 bytes each). Natural eviction during 1ms only flushes a fraction of them. The first 256 bytes may be fresh (enough to pass uniqueness hash) while later bytes remain stale, corrupting the H.264 bitstream.
 
-### Next step: CPU memcpy in spy_ring_write
+### Failed: CPU memcpy in spy_ring_write
 
-Instead of passing the ring buffer pointer to webcam.c, have spy_ring_write (running in movie_record_task context) do a CPU memcpy to a shared buffer. This populates the CPU cache with correct data because:
-1. By the time spy_ring_write runs, firmware has already ensured cache coherency for sub_FF92FE8C's output
-2. CPU memcpy reads correct ring buffer data and writes to the shared buffer through cache
-3. When webcam.c reads the shared buffer, it gets correct cached data (written by CPU, not DMA)
+Attempted having spy_ring_write copy frame data to a shared buffer instead of passing the pointer. Both `__builtin_memcpy` and inline word-by-word copy caused the recording pipeline to stall immediately (1 frame then silence). The movie_record_task likely hit a data abort or timeout during the copy, killing frame production while leaving the camera otherwise functional.
+
+**Root cause**: spy_ring_write runs inside the movie_record_task's message handler. Adding a 40KB copy (even fast word-by-word) to this critical path stalls the recording pipeline. The AVI write semaphore timeout (1000ms) fires before the next message can be processed.
+
+### Failed: Uncacheable memory alias (0x40000000)
+
+Read frame data via the ARM946E-S uncacheable memory alias (`addr | 0x40000000`) in webcam.c, bypassing the CPU cache entirely.
+
+**Test result**: 55 unique frames (improved from 33), but recording stalled after ~5 seconds. The uncacheable bus reads (~40KB per frame) created enough memory bus contention to eventually stall the AVI write path — same DryOS starvation pattern as cache invalidation, just slower onset.
+
+### Conclusion: polling+seqlock is the working approach
+
+The simple polling+seqlock approach (no cache tricks) is the correct solution:
+- **33 unique frames in 20 seconds** — all decoded successfully by FFmpeg
+- **0 duplicates** — proper IDR + P-frame mix with varying sizes
+- **Camera stable for full 20 seconds** — no stalls, no crashes
+- **~1.65 fps effective capture rate** — limited by natural cache eviction rate
+
+The ~550 "drops" are PTP requests where the camera's AVCC parser rejected corrupted data (stale cache in the 4-byte AVCC length prefix). This is a camera-side limitation of the natural cache eviction approach, not a bridge-side decode failure. All frames that pass the AVCC parser decode correctly.
+
+Every approach that touches the recording pipeline's hot path (cache invalidation, memcpy in spy_ring_write, uncacheable reads) causes DryOS starvation. The recording pipeline is extremely timing-sensitive — the only safe approach is to let cache eviction happen naturally via msleep() delays.
