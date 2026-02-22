@@ -9,6 +9,9 @@
 - **Use the debug frame protocol** (`spy_debug_reset/add/send`) in `movie_rec.c` for all camera→bridge diagnostic output. Do NOT inject debug data into H.264 frames. See [Debug Frame Protocol](docs/debug-frame-protocol.md) for API reference and payload format.
 - **No double indirection in movie_rec.c**: NEVER dereference a pointer read from another pointer (e.g. `*(*(0xFF93050C) + 0xC4)`). The ARM compiler generates code that crashes the camera. Use hardcoded addresses instead. The ring buffer struct is always at `0x8968` — see [v22b in dev log](docs/webcam-development-log.md) for the address table.
 - **USB hangs — restart bridge first**: If the bridge receives no data, restart it before assuming a camera crash. Some hangs are USB-level only and clearing the USB connection fixes them. Only do a battery pull if restarting the bridge doesn't help.
+- **Two documentation files — keep both updated**:
+  - [Webcam Development Log](docs/webcam-development-log.md) — chronological history. Append new sections for each test/iteration (v24, v25, ...). Include what was tried, raw test output, failures, and reasoning. This is the full narrative.
+  - [Proven Facts](docs/proven-facts.md) — only verified, 100% confirmed facts. No history, no speculation, no failed approaches. Update this when a test PROVES something new (address confirmed, behavior verified, problem root-caused). Remove or correct entries if later tests disprove them. When in doubt, don't add it — this document must be trustworthy. Read this file at the start of each session to understand current state without getting lost in history.
 
 ## Project Overview
 
