@@ -545,6 +545,13 @@ int main(int argc, char* argv[]) {
                         fprintf(stderr, " NAL=0x%02X (type %d)", mjpeg.data[4], mjpeg.data[4] & 0x1F);
                     fprintf(stderr, "\n");
                 }
+                // Log every IDR frame (NAL type 5) to track GOP sync points
+                if (mjpeg.data.size() >= 5 && (mjpeg.data[4] & 0x1F) == 5) {
+                    static int idr_count = 0;
+                    idr_count++;
+                    fprintf(stderr, "IDR #%d (cam#%u, %zu bytes)\n",
+                            idr_count, mjpeg.frame_num, mjpeg.data.size());
+                }
             }
             prev_data_hash = h;
         }
@@ -607,27 +614,11 @@ int main(int argc, char* argv[]) {
 #ifdef HAS_FFMPEG
             decode_ok = h264dec.decode(mjpeg.data.data(), mjpeg.data.size(), rgb);
             if (!decode_ok) {
-                // Decoder lost sync (dropped P-frames). Re-inject stored IDR
-                // to reset reference pictures, then retry the current P-frame.
-                static int idr_resets = 0;
-                if (h264dec.reinject_idr(rgb)) {
-                    idr_resets++;
-                    if (idr_resets <= 5 || idr_resets % 50 == 0) {
-                        fprintf(stderr, "H.264: IDR re-inject #%d, retrying P-frame\n", idr_resets);
-                    }
-                    // IDR decoded OK — now retry the P-frame that failed
-                    decode_ok = h264dec.decode(mjpeg.data.data(), mjpeg.data.size(), rgb);
-                }
-                if (!decode_ok) {
-                    static int h264_skip = 0;
-                    h264_skip++;
-                    if (h264_skip <= 5 || h264_skip % 100 == 0) {
-                        fprintf(stderr, "H.264 FAIL #%d: %zu bytes, err=%s\n",
-                                h264_skip, mjpeg.data.size(), h264dec.get_last_error().c_str());
-                    }
-                    frames_dropped++;
-                    continue;
-                }
+                frames_dropped++;
+                // Brief pause to avoid overwhelming PTP/USB when decoder
+                // can't keep up (missing reference frames between IDRs).
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                continue;
             }
 #else
             static int h264_count = 0;

@@ -46,6 +46,7 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
     hdr[1] = (unsigned int)ptr;
     hdr[2] = size;
     hdr[3]++;
+
 }
 
 void __attribute__((naked,noinline)) movie_record_task(){
