@@ -11,17 +11,10 @@ void  set_quality(int *x){ // -17 highest; +12 lowest
 }
 
 
-// Store H.264 frame pointer and signal semaphore (Option 2: pointer pass-through).
-// Called from sub_FF85D98C_my after sub_FF92FE8C returns encoded frame.
+// Store H.264 frame pointer and signal semaphore.
+// Called from sub_FF85D98C_my after sub_FF92FE8C returns each encoded frame.
 // Does NOT copy data — just stores the ring buffer pointer for the webcam module
-// to read directly via its own memcpy.
-//
-// Store H.264 frame pointer and signal semaphore (Option 2: pointer pass-through).
-// Called from sub_FF85D98C_my after sub_FF92FE8C returns encoded frame.
-// Does NOT copy data — just stores the ring buffer pointer for the webcam module
-// to read directly via its own memcpy.
-//
-// Simple overwrite protocol: always writes the latest frame.
+// to read directly via its own memcpy. Simple overwrite protocol: always writes the latest frame.
 // The consumer reads whenever it wakes on the semaphore.
 //
 // Shared memory protocol at 0x000FF000 (initialized by webcam.c):
@@ -47,119 +40,6 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
     }
 }
 
-static int idr_sent = 0;   // msg 6 call counter (0=not yet, 1+=sent)
-static int msg5_done = 0;  // Set by spy_msg5_debug when msg 5 completes
-static volatile int bss_pad = 0;  // BSS padding — keep BSS=532 for stability
-
-// Msg 5 debug capture — stores ring buffer values right after IDR encoding
-static unsigned int msg5_rb_base = 0;
-static unsigned int msg5_idr_ptr = 0;
-static unsigned int msg5_idr_size = 0;
-static unsigned int msg5_count = 0;
-
-// ============================================================
-// Debug frame queue (lock-free SPSC ring buffer)
-// Producer: movie_rec.c (spy_idr_capture via spy_debug_* API)
-// Consumer: webcam.c (capture_frame_h264 reads slots)
-// ============================================================
-#define DBG_SLOT_SIZE   512
-#define DBG_QUEUE_DEPTH 4
-#define DBG_QUEUE_BASE  0x000FF040
-
-static unsigned char dbg_build_buf[DBG_SLOT_SIZE];
-static unsigned int  dbg_build_len = 0;
-static unsigned int  dbg_seq = 0;
-
-// Start building a new debug frame
-static void spy_debug_reset(void)
-{
-    dbg_build_buf[0]='D'; dbg_build_buf[1]='B';
-    dbg_build_buf[2]='G'; dbg_build_buf[3]='!';
-    *(unsigned int *)(dbg_build_buf + 4) = dbg_seq++;
-    *(unsigned short *)(dbg_build_buf + 8) = 0;
-    dbg_build_buf[10] = 0; dbg_build_buf[11] = 0;
-    dbg_build_len = 12;
-}
-
-// Append a tagged uint32 entry to the current debug frame
-static void spy_debug_add(char t0, char t1, char t2, char t3, unsigned int value)
-{
-    if (dbg_build_len + 8 > DBG_SLOT_SIZE - 4) return;
-    dbg_build_buf[dbg_build_len]   = t0;
-    dbg_build_buf[dbg_build_len+1] = t1;
-    dbg_build_buf[dbg_build_len+2] = t2;
-    dbg_build_buf[dbg_build_len+3] = t3;
-    *(unsigned int *)(dbg_build_buf + dbg_build_len + 4) = value;
-    dbg_build_len += 8;
-    (*(unsigned short *)(dbg_build_buf + 8))++;
-}
-
-// Enqueue the debug frame — copy to next queue slot, advance write_idx
-static void spy_debug_send(void)
-{
-    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    unsigned int wr = hdr[8];
-    unsigned int rd = hdr[9];
-    unsigned int next_wr = (wr + 1) % DBG_QUEUE_DEPTH;
-    unsigned int i;
-    volatile unsigned char *slot;
-
-    if (next_wr == rd) return;  // Queue full — drop frame
-
-    slot = (volatile unsigned char *)(DBG_QUEUE_BASE + wr * DBG_SLOT_SIZE);
-    *(volatile unsigned short *)slot = (unsigned short)dbg_build_len;
-    slot[2] = 0; slot[3] = 0;
-    for (i = 0; i < dbg_build_len; i++)
-        slot[4 + i] = dbg_build_buf[i];
-
-    hdr[8] = next_wr;  // Advance write index LAST (memory barrier via volatile)
-}
-
-static void __attribute__((used,noinline)) spy_msg5_debug(void)
-{
-    unsigned int rb_base = *(volatile unsigned int *)0xFF93050C;
-    msg5_count++;
-    msg5_rb_base = rb_base;
-    if (rb_base != 0) {
-        msg5_idr_ptr = *(volatile unsigned int *)(rb_base + 0xD8);
-        msg5_idr_size = *(volatile unsigned int *)(rb_base + 0xDC);
-    }
-    msg5_done = 1;  // Signal that IDR encoding is complete
-}
-
-static int __attribute__((used,noinline)) spy_idr_capture(void)
-{
-    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-
-    if (hdr[0] != 0x52455753) { return 0; }  // Skip but don't reset counter
-    idr_sent++;
-
-    // Send debug frames at call 2 (early) and call 500 (~16s into recording)
-    if (idr_sent != 2 && idr_sent != 500) return 0;
-
-    {
-        // Ring buffer struct at 0x8968:
-        //   +0xC0 (0x8A28) = first-frame pointer (IDR data address)
-        //   +0xD8 (0x8A40) = IDR offset in data area (MOV metadata)
-        //   +0xDC (0x8A44) = IDR size (MOV metadata)
-        unsigned int first_ptr  = *(volatile unsigned int *)0x8A28;  // +0xC0
-        unsigned int idr_sz     = *(volatile unsigned int *)0x8A44;  // +0xDC
-
-        spy_debug_reset();
-        spy_debug_add('M','6','C','t', idr_sent);     // msg 6 call count
-        spy_debug_add('M','5','C','t', msg5_count);    // msg 5 call count — key question!
-        spy_debug_add('F','P','t','r', first_ptr);     // First-frame pointer from +0xC0
-        spy_debug_add('I','S','i','z', idr_sz);        // IDR size from +0xDC
-        // Check if +0xC0 data changed (would indicate IDR refresh)
-        if (first_ptr != 0 && first_ptr > 0x1000 && first_ptr < 0x80000000) {
-            spy_debug_add('N','A','L','0', *(volatile unsigned int *)first_ptr);
-            spy_debug_add('N','A','L','4', *(volatile unsigned int *)(first_ptr + 4));
-        }
-        spy_debug_send();
-    }
-
-    return 0;
-}
 
 
 void __attribute__((naked,noinline)) movie_record_task(){
@@ -238,7 +118,6 @@ void __attribute__((naked,noinline)) movie_record_task(){
                  "B       loc_FF85E120\n"
  "loc_FF85E10C:\n"
                  "BL      sub_FF85D3BC\n"
-                 "BL      spy_msg5_debug\n"  // Capture +0xD8/+0xDC right after IDR encoding
                  "B       loc_FF85E120\n"
  "loc_FF85E114:\n"
                  "BL      sub_FF85D218\n"
@@ -310,14 +189,10 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "MOVS    R8, R0\n"
                  "BNE     loc_FF85DA40\n"
 
-                // One-shot IDR capture: on first frame, send IDR instead of P-frame
-                "BL      spy_idr_capture\n"    // Returns 1 if IDR was sent
-                "CMP     R0, #0\n"
-                "BNE     loc_FF85DA24\n"       // Skip P-frame if IDR was sent
-                // Normal P-frame delivery
+                // Deliver every frame (IDR + P-frames) to webcam module
                 "LDR     R0, [SP, #0x34]\n"    // R0 = jpeg_ptr from sub_FF92FE8C
                 "LDR     R1, [SP, #0x30]\n"    // R1 = jpeg_size
-                "BL      spy_ring_write\n"     // Send P-frame
+                "BL      spy_ring_write\n"     // Signal webcam.c via semaphore
 
  "loc_FF85DA24:\n"
                  "LDR     R0, [R6,#0x2C]\n"

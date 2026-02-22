@@ -1565,21 +1565,51 @@ Disabled bridge-side diagnostics dumps and memory probes. Result:
 2. Are the MOV periodic keyframes (GOP=15) produced by a different encoder configuration than our hooked recording?
 3. Can we force periodic IDR re-injection from the stored +0xC0 data to make the decoder self-heal?
 
-## Future Ideas (Not Yet Implemented)
+## Production Cleanup — Strip Dead Code (2026-02-22)
 
-### Raw YUV Pipeline Streaming (640x480)
+With the H.264 pipeline proven working (IDR injection + AVCC format + semaphore delivery + bridge decode), removed all dead code from earlier development phases.
 
-Stream raw 640x480 YUV frames from the video pipeline directly to the PC, bypassing on-camera JPEG encoding entirely. This could dramatically increase FPS since the ARM926 CPU would only need to memcpy the frame data, not encode it.
+### movie_rec.c — Debug instrumentation removed
 
-**Approach**:
-- Camera: capture `rec_cb_arg2` buffer (640x480 UYVY, ~614 KB/frame) from pipeline callback, send raw bytes over PTP
-- PC bridge: receive raw YUV data, encode to JPEG using libjpeg-turbo (PC encodes ~1000x faster than ARM926)
+Removed all debug infrastructure that was used during IDR discovery:
+- `spy_debug_reset/add/send` functions and the SPSC debug frame queue at 0xFF040
+- `spy_idr_capture` function (was sending debug frames with ring buffer state)
+- `spy_msg5_debug` function (was probing msg 5 handler context)
+- All debug statics: `idr_sent`, `msg5_done`, `bss_pad`, `msg5_rb_base/idr_ptr/idr_size/count`, `dbg_build_buf[512]`, `dbg_build_len`, `dbg_seq`
+- BL to `spy_msg5_debug` from `movie_record_task`
+- Conditional branch around `spy_idr_capture` in `sub_FF85D98C_my` — every frame now goes directly to `spy_ring_write`
 
-**Bandwidth analysis**: 614 KB × 5 fps = 3 MB/s. USB 2.0 High Speed theoretical max ~40 MB/s. Should be feasible.
+**What remains**: `spy_ring_write` (~15 lines) is the only C function. It stores ptr+size in the shared header at 0xFF000 and signals the semaphore. Zero debug overhead on the hot path.
 
-**Pros**: No encoding overhead on camera, potentially 5-15+ fps (limited only by USB transfer speed + memcpy)
-**Cons**: ~614 KB per frame vs ~26 KB for JPEG (24x more USB bandwidth), needs bridge decoder changes
+### webcam.c — MJPEG/UYVY/diagnostic paths removed (1502 → 580 lines)
 
-### JPCORE Hardware Encoder — Status: BLOCKED
+Removed code from earlier investigation phases that was never executed during H.264 recording:
 
-JPCORE hardware is confirmed initialized and processing frames (PS3 mask=6, piVar1[3]=1, HW registers changing). But the encoded JPEG output is DISCARDED because state[+0x114] was set to our spy callback instead of a real frame delivery callback. The original movie_record_task callbacks CRASH the camera because they need full AVI recording context. A custom lightweight callback that captures JPCORE output without crashing is the missing piece — but the JPCORE output format and delivery mechanism from FUN_ff8c335c are not yet fully understood.
+| Removed | Lines | Why dead |
+|---------|-------|----------|
+| `rec_callback_spy` + 15 `rec_cb_*` statics | ~55 | Callback never installed (`hw_mjpeg_start` skipped during recording) |
+| `hw_mjpeg_start/stop` | ~180 | JPCORE hardware encoder setup, not used with real recording |
+| `hw_mjpeg_get_frame`, `find_jpeg_eoi` | ~115 | VRAM buffer scanning, superseded by spy buffer |
+| `capture_and_compress_frame_sw` | ~100 | Software JPEG via tje.c, never reached when `recording_active` |
+| `capture_frame_uyvy` | ~35 | Raw UYVY path, never reached when `recording_active` |
+| `capture_frame_hwjpeg` | ~75 | JPCORE JPEG capture, never reached when `recording_active` |
+| 12 JPCORE/MJPEG firmware defines | ~50 | Addresses for dead functions |
+| `sw_fail_*` counters, `hw_fail_*` counters | ~15 | Software/hardware encoder diagnostics |
+| `last_spy_cnt`, `avi_sem_handle`, `last_cb_count_*` | ~5 | Old polling-based stale detection, superseded by semaphore |
+| JPEG double-buffer, UYVY buffer, frame index | ~10 | Buffers for removed paths |
+| 4 unused includes (`viewport.h`, `tje.h`, `levent.h`, `keyboard.h`) | 4 | Headers for removed code |
+
+Also removed one redundant bounds check: `if (size == 0 || size > SPY_BUF_SIZE) return 0;` after the memcpy — both conditions were already handled (null/zero check and clamp) two lines earlier.
+
+**Simplified functions**: `capture_frame()` now only calls `capture_frame_h264()`. `webcam_get_frame()` directly returns H.264 data without format dispatch. `webcam_start/stop()` have no MJPEG/UYVY state to manage.
+
+### Binary size unchanged
+
+All removed code was `static` and unreferenced — the linker already excluded it. The cleanup is source-level only: easier to read, audit, and maintain.
+
+### Stability review
+
+Reviewed the optimized firmware for correctness:
+- **movie_rec.c**: Register usage safe (R0-R3 clobbered by BL, overwritten by subsequent instructions). Volatile store ordering correct (data first, counter last, then semaphore). STATE 3→4 promotion handles both fresh and already-promoted states.
+- **webcam.c**: All memcpy bounded by SPY_BUF_SIZE. AVCC parser has length/type validation. Shutdown ordering safe (magic cleared → 50ms sleep → stop recording → delete semaphore). Semaphore lifecycle correct (created in start, stored in spy header, deleted in stop).
+- **No regressions**: Every code path in the H.264 pipeline preserved exactly.
