@@ -609,7 +609,7 @@ bool PTPClient::get_frame(MJPEGFrame& frame) {
 
     if (resp.num_params < 1 || resp.params[0] == 0) {
         static int dbg_count = 0;
-        if (dbg_count++ < 10) {
+        if (false && dbg_count++ < 2) {
             // Decode hw diagnostics from param4: call|soi|eoi|hw_avail (8 bits each)
             uint32_t hw_diag = (resp.num_params >= 4) ? resp.params[3] : 0;
             fprintf(stderr, "  get_frame: active=%u gf_rc=%d hw_avail=%u fail:call=%u soi=%u eoi=%u\n",

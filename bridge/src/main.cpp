@@ -343,8 +343,8 @@ int main(int argc, char* argv[]) {
         if (mjpeg.format == ptp::FRAME_FMT_DEBUG) {
             print_debug_frame(mjpeg.data.data(), mjpeg.data.size());
 
-            // After M6.2 debug frame, probe IDR-related addresses via PTP memory read
-            if (mjpeg.data.size() >= 20 && mjpeg.data[12] == 'S' && mjpeg.data[13] == 'r') {
+            // Memory probes disabled — IDR injection working since v23
+            if (false && mjpeg.data.size() >= 20 && mjpeg.data[12] == 'S' && mjpeg.data[13] == 'r') {
                 uint32_t src_val;
                 memcpy(&src_val, mjpeg.data.data() + 16, 4);
                 if (src_val == 0x4D362E32) {  // "M6.2"
@@ -506,7 +506,7 @@ int main(int argc, char* argv[]) {
             if (!decode_ok) {
                 static int h264_skip = 0;
                 h264_skip++;
-                if (h264_skip <= 20 || h264_skip % 50 == 0) {
+                if (h264_skip <= 5 || h264_skip % 100 == 0) {
                     fprintf(stderr, "H.264 FAIL #%d: %zu bytes, err=%s\n",
                             h264_skip, mjpeg.data.size(), h264dec.get_last_error().c_str());
                     // Dump first 32 bytes to diagnose AVCC format issues

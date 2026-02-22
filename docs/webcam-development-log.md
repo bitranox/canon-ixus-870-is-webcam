@@ -1509,6 +1509,62 @@ H.264 FAIL #2: 37372 bytes — NAL=0x61 (type=1, P-frame)
 
 **Fix approach**: Read IDR data directly from the +0xC0 pointer (0x412C4720) in the webcam module when it starts polling. The data persists at that address throughout recording. Send SPS+PPS+IDR as frame #0 before any P-frames.
 
+## v23 Series — H.264 Decode Working, IDR GOP Discovery (2026-02-22)
+
+### v23: IDR injection + H.264 decode pipeline working
+
+**IDR injection success**: The hybrid AVCC format detection in webcam.c now correctly handles the camera's first-frame buffer layout:
+- Offset 0-3: Annex B start code (`00 00 00 01`)
+- Offset 4-15: SPS (12 bytes, Annex B)
+- Offset 16-19: Annex B start code
+- Offset 20-23: PPS (4 bytes, Annex B)
+- Offset 24-27: AVCC 4-byte BE length prefix (matches +0xDC IDR size)
+- Offset 28+: IDR NAL data (type 0x65)
+
+The scanner rebuilds only the IDR NAL in AVCC format (no in-band SPS/PPS — bridge has them from avcC extradata init). Total IDR frame: ~52KB.
+
+**FFmpeg decode fixes**:
+- `AV_CODEC_FLAG_LOW_DELAY` — **critical** for Baseline H.264. Without this, `avcodec_receive_frame` returns EAGAIN for every P-frame.
+- SPS must be 13 bytes (with RBSP stop bit `0x01`), not 12 bytes. The camera's Annex B SPS is truncated at 12 bytes; using it causes FFmpeg "Overread VUI by 8 bits" warning.
+- IDR-only injection (no in-band SPS/PPS) avoids overriding the avcC parameters.
+
+**Bridge test result**: First 5 frames (IDR + 4 P-frames) decode successfully to 640x480 → 1280x720 RGB. H.264 decode pipeline fully functional. Subsequent frames fail due to bridge-side diagnostics output blocking the main loop (>33ms per frame at 30fps), causing P-frame gaps that permanently break the decoder.
+
+### v23b: Diagnostics bottleneck analysis
+
+**Problem**: After 5 successful frames, all subsequent P-frames fail with "Decoder needs more data" (EAGAIN). Bridge-side diagnostics dumps (~130 lines of stderr per "no frame" response) and PTP memory probes (6 round-trips on M6.2 debug frames) block the main loop long enough to miss P-frames. Once P-frames are missed, the decoder loses its reference chain and never recovers.
+
+**Key finding — Camera produces periodic IDR frames (GOP=15)**:
+
+Analysis of the camera's own MOV file (`MVI_4032.MOV`, 604 frames) reveals the stss (sync sample) atom:
+```
+stss: 41 keyframes at samples 1, 16, 31, 46, 61, 76, 91, ...
+```
+The H.264 encoder produces an **IDR every 15 frames** (0.5 seconds at 30fps). This is NOT a single-IDR stream.
+
+**Key finding — Periodic IDRs go through msg 5, not msg 6**:
+
+Despite producing 41 IDRs across 604 frames, the bridge received 300+ frames via spy_ring_write — ALL with NAL type `0x61` (P-frame). Zero periodic IDRs arrived. The reason:
+
+- **msg 5** (`sub_FF85D3BC`): Handles IDR encoding. Called periodically every 15 frames.
+- **msg 6** (`sub_FF85D98C_my` → `sub_FF92FE8C`): Handles regular P-frame encoding.
+- `spy_ring_write` is hooked **only in msg 6**. The periodic IDRs produced by msg 5 are never captured.
+
+**Message flow for a recording session**:
+```
+msg 6 call 1  → P-frame (or STATE 3→4 promotion, IDR via +0xC0)
+msg 5         → IDR encoding (every 15th frame)
+msg 6 call 2  → P-frame
+msg 6 call 3  → P-frame
+...
+msg 6 call 15 → P-frame
+msg 5         → IDR encoding (next keyframe)
+msg 6 call 16 → P-frame
+...
+```
+
+**Next step**: Hook msg 5 to also deliver IDR frames via spy_ring_write. The IDR data is available at ring buffer +0xC0 (`0x8A28`) / +0xDC (`0x8A44`) immediately after msg 5 completes. With periodic IDRs every 0.5 seconds, the decoder can self-heal after any dropped P-frames.
+
 ## Future Ideas (Not Yet Implemented)
 
 ### Raw YUV Pipeline Streaming (640x480)
