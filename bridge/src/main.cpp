@@ -615,9 +615,6 @@ int main(int argc, char* argv[]) {
             decode_ok = h264dec.decode(mjpeg.data.data(), mjpeg.data.size(), rgb);
             if (!decode_ok) {
                 frames_dropped++;
-                // Brief pause to avoid overwhelming PTP/USB when decoder
-                // can't keep up (missing reference frames between IDRs).
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 continue;
             }
 #else

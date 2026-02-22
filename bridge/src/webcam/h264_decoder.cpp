@@ -106,11 +106,10 @@ bool H264Decoder::decode(const uint8_t* data, size_t size, RGBFrame& rgb_out) {
         return false;
     }
 
-    // Store first IDR frame for later re-injection on decode failure.
+    // Store every IDR frame for reference (used by reinject_idr recovery).
     // AVCC format: first NAL type is at byte 4 (after 4-byte length prefix).
-    if (impl_->stored_idr.empty() && size >= 5 && (data[4] & 0x1F) == 5) {
+    if (size >= 5 && (data[4] & 0x1F) == 5) {
         impl_->stored_idr.assign(data, data + size);
-        fprintf(stderr, "H.264 decoder: stored IDR frame (%zu bytes) for recovery\n", size);
     }
 
     // Sanitize AVCC data before feeding to FFmpeg.
@@ -249,6 +248,9 @@ bool H264Decoder::decode(const uint8_t* data, size_t size, RGBFrame& rgb_out) {
             char errbuf[128];
             av_strerror(ret, errbuf, sizeof(errbuf));
             impl_->last_error = std::string("receive_frame failed: ") + errbuf;
+            // Flush decoder on error so the next IDR gets a clean slate.
+            // Without this, error state accumulates and prevents IDR sync.
+            avcodec_flush_buffers(impl_->ctx);
         }
         return false;
     }
