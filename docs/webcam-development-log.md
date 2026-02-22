@@ -1799,3 +1799,34 @@ At 30fps, frames arrive every 33ms. A 10ms delay leaves 23ms margin before the n
 - IDR re-injection fired ~8 times (P-frame continuity gaps from skipped frames)
 
 **Why it works**: 10ms of DryOS task scheduling allows dozens of other tasks (USB, filesystem, LCD, etc.) to run. Each task's memory accesses evict cache lines from the stale ring buffer data. By the time memcpy runs, most of the ~1250 cache lines (40KB / 32B) covering the frame data have been replaced with other data, forcing cache misses that read fresh DMA data from physical memory.
+
+### msleep tuning: 5ms, 10ms, 20ms, 25ms comparison
+
+Tested different cache eviction delays to find the optimal FPS/reliability tradeoff:
+
+| Delay | Frames | Drops | FPS | Success | Notes |
+|-------|--------|-------|-----|---------|-------|
+| 1ms | 33 | 550 | 1.6 | 5.6% | Baseline — almost all frames have stale cache |
+| 5ms | 433 | 117 | 21-43 | 79% | Bursty FPS, inconsistent |
+| 10ms | 445 | 107 | 20-48 | 80% | Bursty but good average throughput |
+| 20ms | 361 | 29 | 17-20 | 93% | Stable FPS, very few drops |
+| 25ms | 86 | 0 | 4-5 | 100% | Zero drops but low FPS (approaches 1/30fps limit) |
+
+**Key observations**:
+- **5-10ms**: High throughput (~22fps avg) but 20% of frames still have stale cache. FPS is bursty (varies 20-48fps) because cache eviction timing is non-deterministic.
+- **20ms**: Sweet spot for reliability. 93% success, 17-20fps stable. Only 29 drops in 20 seconds.
+- **25ms**: 100% reliable but FPS drops to ~4. At 25ms delay + ~8ms for PTP round-trip, we're only servicing ~3 frame intervals per cycle.
+- A separate DryOS thread wouldn't help — the CPU data cache is shared across all tasks. The cache coherency issue is hardware-level, not scheduling-level.
+
+### Parallel transfer / threading analysis
+
+**Question**: Could a separate DryOS task do the memcpy in parallel, avoiding the sleep penalty?
+
+**Answer**: No — the ARM946E-S has a single shared L1 data cache. All DryOS tasks read through the same stale cache. A background copy task would face identical cache coherency issues and still need msleep delays.
+
+The only hardware mechanisms that bypass the CPU cache are:
+1. Cache invalidation MCR instructions — crashes/stalls recording pipeline (proven)
+2. Uncacheable memory alias (0x40000000) — bus contention stalls recording after ~5s (proven)
+3. DMA-to-DMA copy — would bypass cache but no accessible DryOS DMA copy API
+
+Natural cache eviction via msleep remains the only viable approach. The tradeoff is inherent: longer sleep = more eviction = higher reliability = lower FPS.

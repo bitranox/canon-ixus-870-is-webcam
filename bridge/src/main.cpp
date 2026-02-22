@@ -299,6 +299,11 @@ int main(int argc, char* argv[]) {
     int total_dropped = 0;
     int total_skipped = 0;
 
+    // Frame data uniqueness tracking: detect if camera sends identical data
+    uint32_t prev_data_hash = 0;
+    int unique_frames = 0;
+    int duplicate_frames = 0;
+
     while (g_running) {
         // Check timeout
         if (opts.timeout_sec > 0) {
@@ -512,6 +517,32 @@ int main(int argc, char* argv[]) {
             continue;  // Not a video frame — don't count or decode
         }
 
+        // Track frame data uniqueness (simple FNV-1a hash of first 256 bytes)
+        {
+            uint32_t h = 0x811c9dc5;
+            size_t n = (mjpeg.data.size() < 256) ? mjpeg.data.size() : 256;
+            for (size_t i = 0; i < n; i++) {
+                h ^= mjpeg.data[i];
+                h *= 0x01000193;
+            }
+            if (h == prev_data_hash && prev_data_hash != 0) {
+                duplicate_frames++;
+            } else {
+                unique_frames++;
+                // Log first 16 bytes and NAL type for first 10 unique frames
+                if (unique_frames <= 10) {
+                    fprintf(stderr, "UNIQUE #%d (cam#%u, %zu bytes): ",
+                            unique_frames, mjpeg.frame_num, mjpeg.data.size());
+                    for (size_t i = 0; i < 16 && i < mjpeg.data.size(); i++)
+                        fprintf(stderr, "%02X ", mjpeg.data[i]);
+                    if (mjpeg.data.size() >= 5)
+                        fprintf(stderr, " NAL=0x%02X (type %d)", mjpeg.data[4], mjpeg.data[4] & 0x1F);
+                    fprintf(stderr, "\n");
+                }
+            }
+            prev_data_hash = h;
+        }
+
         // Decode frame (JPEG, raw UYVY, or H.264)
         webcam::RGBFrame rgb;
         bool decode_ok;
@@ -627,6 +658,8 @@ int main(int argc, char* argv[]) {
     printf("  Received: %d frames\n", total_received);
     printf("  Dropped:  %d (decode failures)\n", total_dropped);
     printf("  Skipped:  %d (camera-produced but never received)\n", total_skipped);
+    printf("  Unique data: %d frames\n", unique_frames);
+    printf("  Duplicate data: %d frames (identical to previous)\n", duplicate_frames);
     printf("  Last cam frame#: %u\n", last_frame_num);
     if (last_frame_num > 0) {
         int expected = (int)last_frame_num;
