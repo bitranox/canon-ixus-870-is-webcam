@@ -1911,7 +1911,23 @@ The ~165ms per successful frame breaks down as:
    - memcpy ~40KB from ring buffer
 3. PTP response sent back to bridge
 
-To go beyond 6 FPS for successfully decoded frames, we need to reduce the camera-side cycle time. Options to explore:
-- Remove or reduce msleep(10) and accept cache misses (current "fast fail" approach already does this effectively)
+### Corrected no-decode test (with correct early hook + msleep(10) firmware)
+
+The first no-decode test (120 frames, 6 FPS) was run with the **wrong firmware** (mid-point hook, no msleep) still on the SD card. After deploying the correct firmware:
+
+**Results** (20 second test, early hook + msleep(10)):
+- **420 frames received, 126 drops (fast-fail), 0 skips = ~21 FPS**
+- **100% AVCC header validity** (0 invalid frames out of 420 successes)
+- **420 unique frames, 0 duplicates**
+- Total PTP requests: 546 (420 success + 126 fail) = **~27 req/sec**
+
+**This matches the with-decode results exactly** (445 frames at 22 FPS). Bridge decode overhead is negligible — the IDR re-injection "vicious cycle" seen in earlier adaptive approaches was caused by those approaches' low FPS, not by decode cost.
+
+**Natural IDR frames from camera GOP**: The camera's H.264 encoder produces IDR keyframes (NAL type 5, ~65KB) approximately every 30 frames (1/sec at 30fps). At ~21fps capture, we see a natural IDR every ~40 received frames. This means the decoder gets periodic sync points without needing artificial re-injection. IDR sizes: injected from +0xC0 ~44KB (stripped SPS/PPS), natural GOP IDR ~65KB, normal P-frames ~37KB, P-frame after IDR ~50KB.
+
+### Remaining bottleneck: camera PTP task latency
+
+To go beyond ~21 FPS, we need to reduce the camera-side cycle time. Options to explore:
+- Remove msleep(10) and read from uncached memory alias (0x40000000 | addr) — bypasses CPU cache entirely, no eviction delay needed
 - Find a way to invalidate CPU cache lines directly (no known DryOS API)
-- Use uncached memory alias (0x40000000 | addr) for reads — bypasses cache entirely but may be slower for large memcpy
+- Reduce PTP task scheduling overhead (unlikely — DryOS internal)
