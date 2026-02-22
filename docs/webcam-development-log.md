@@ -1830,3 +1830,32 @@ The only hardware mechanisms that bypass the CPU cache are:
 3. DMA-to-DMA copy — would bypass cache but no accessible DryOS DMA copy API
 
 Natural cache eviction via msleep remains the only viable approach. The tradeoff is inherent: longer sleep = more eviction = higher reliability = lower FPS.
+
+### Failed: adaptive approaches (copy-previous, probe, copy-then-validate)
+
+Tested three "smarter" alternatives to fixed msleep delay. All resulted in ~4-5fps — worse than msleep(10) at 22fps.
+
+| Approach | Frames | Drops | FPS | Notes |
+|----------|--------|-------|-----|-------|
+| Copy previous frame | 81 | 0 | 4.0 | Wait for next frame, copy old one |
+| Probe 4-byte change | 63 | 18 | 3.2 | Poll first 4 bytes until changed |
+| Copy-then-validate | 95 | 0 | 4.7 | Copy immediately, AVCC check, retry |
+| 10ms base + validate | 89 | 9 | 4.5 | msleep(10) + validate retry loop |
+
+**Root cause: IDR re-injection feedback loop.**
+
+At ~5fps, we capture every ~6th frame out of 30fps. Every P-frame is non-consecutive, so the H.264 decoder fails (missing reference frame) and triggers IDR re-injection — decoding a 44KB IDR + retrying the P-frame through FFmpeg. Each re-injection takes ~100ms of bridge CPU time, which slows PTP request rate, causing MORE frame skipping, MORE re-injection, creating a vicious cycle that pins FPS at ~5.
+
+The plain msleep(10) approach avoids this because:
+- **Fast failures**: stale frames with invalid AVCC return 0 bytes instantly — no decode, no re-injection
+- **High PTP request rate**: ~27 requests/sec keeps cycle time at ~36ms
+- **Frame continuity**: at ~22fps capture, most consecutive frames are captured, so P-frames decode without re-injection
+
+**Lesson**: For streaming H.264 with P-frame dependencies, **fast failures + fast retries > slow successes**. Camera-side retry loops add latency that breaks the P-frame chain, triggering expensive bridge-side recovery.
+
+### Conclusion: msleep(10) is optimal
+
+Reverted to plain msleep(10). The 80% success rate at 22fps is the best achievable balance:
+- ~338 successfully decoded frames in 20 seconds (~17fps decoded)
+- Camera stable, no stalls
+- Bridge handles the 20% failures via fast retry + occasional IDR re-injection

@@ -5,9 +5,10 @@
 //
 // movie_rec.c's spy_ring_write() stores each frame's ring buffer pointer
 // and size using a seqlock protocol.  capture_frame_h264() polls the
-// seqlock counter with msleep(1) delays, which allows natural CPU cache
-// eviction by other DryOS tasks — solving the DMA cache coherency issue
-// without explicit cache invalidation (which caused DryOS starvation).
+// seqlock counter with msleep(1) delays, then waits 10ms for cache
+// eviction before copying.  Fast failures (stale cache → invalid AVCC)
+// are returned as 0 bytes — the bridge retries immediately, keeping
+// PTP request rate high enough for H.264 P-frame continuity.
 //
 // On the first capture call, the IDR keyframe is read directly from the
 // ring buffer's +0xC0 pointer (which persists throughout recording) and
@@ -218,9 +219,22 @@ static int capture_frame_h264(void)
         }
     }
 
-    // Poll for new frame with seqlock consistency check (max ~100ms).
-    // msleep(1) between attempts allows other DryOS tasks to run and
-    // naturally evict CPU cache lines containing stale DMA data.
+    // Poll for new frame with seqlock + 10ms cache eviction delay.
+    //
+    // DMA cache coherency: JPCORE DMA writes H.264 data to ring buffer
+    // but CPU cache has stale data. msleep(10) lets other DryOS tasks
+    // evict cache lines, giving ~80% success rate at ~22fps.
+    //
+    // The 20% of frames with stale cache are returned as-is — the AVCC
+    // parser below rejects invalid data and returns 0 (no frame). The
+    // bridge retries immediately, keeping PTP request rate high (~27/sec).
+    // This maintains H.264 P-frame continuity, avoiding expensive IDR
+    // re-injection that would slow the bridge and create a vicious cycle.
+    //
+    // Longer delays (20-25ms) give higher per-frame success but lower FPS,
+    // breaking P-frame continuity and triggering constant re-injection.
+    // Camera-side retry loops (validate+retry) have the same effect.
+    // Fast failures + fast retries > slow successes for streaming H.264.
     {
         static unsigned int last_seq = 0;
         int polls;
@@ -238,9 +252,7 @@ static int capture_frame_h264(void)
             }
 
             // New frame detected — wait for cache eviction before reading.
-            // Other DryOS tasks running during this sleep evict stale cache
-            // lines, so the subsequent memcpy reads fresh DMA data.
-            msleep(25);
+            msleep(10);
 
             // Re-verify frame wasn't overwritten during the wait
             seq_after = hdr[3];
