@@ -504,29 +504,27 @@ int main(int argc, char* argv[]) {
 #ifdef HAS_FFMPEG
             decode_ok = h264dec.decode(mjpeg.data.data(), mjpeg.data.size(), rgb);
             if (!decode_ok) {
-                static int h264_skip = 0;
-                h264_skip++;
-                if (h264_skip <= 5 || h264_skip % 100 == 0) {
-                    fprintf(stderr, "H.264 FAIL #%d: %zu bytes, err=%s\n",
-                            h264_skip, mjpeg.data.size(), h264dec.get_last_error().c_str());
-                    // Dump first 32 bytes to diagnose AVCC format issues
-                    fprintf(stderr, "  hex:");
-                    for (size_t di = 0; di < 32 && di < mjpeg.data.size(); di++)
-                        fprintf(stderr, " %02x", mjpeg.data[di]);
-                    fprintf(stderr, "\n");
-                    // Show AVCC length interpretation
-                    if (mjpeg.data.size() >= 5) {
-                        uint32_t avcc_len = ((uint32_t)mjpeg.data[0] << 24) |
-                                            ((uint32_t)mjpeg.data[1] << 16) |
-                                            ((uint32_t)mjpeg.data[2] << 8) |
-                                            (uint32_t)mjpeg.data[3];
-                        uint8_t nal_hdr = mjpeg.data[4];
-                        fprintf(stderr, "  AVCC len=%u, NAL=0x%02x (type=%d, fzb=%d)\n",
-                                avcc_len, nal_hdr, nal_hdr & 0x1F, (nal_hdr >> 7) & 1);
+                // Decoder lost sync (dropped P-frames). Re-inject stored IDR
+                // to reset reference pictures, then retry the current P-frame.
+                static int idr_resets = 0;
+                if (h264dec.reinject_idr(rgb)) {
+                    idr_resets++;
+                    if (idr_resets <= 5 || idr_resets % 50 == 0) {
+                        fprintf(stderr, "H.264: IDR re-inject #%d, retrying P-frame\n", idr_resets);
                     }
+                    // IDR decoded OK — now retry the P-frame that failed
+                    decode_ok = h264dec.decode(mjpeg.data.data(), mjpeg.data.size(), rgb);
                 }
-                frames_dropped++;
-                continue;
+                if (!decode_ok) {
+                    static int h264_skip = 0;
+                    h264_skip++;
+                    if (h264_skip <= 5 || h264_skip % 100 == 0) {
+                        fprintf(stderr, "H.264 FAIL #%d: %zu bytes, err=%s\n",
+                                h264_skip, mjpeg.data.size(), h264dec.get_last_error().c_str());
+                    }
+                    frames_dropped++;
+                    continue;
+                }
             }
 #else
             static int h264_count = 0;

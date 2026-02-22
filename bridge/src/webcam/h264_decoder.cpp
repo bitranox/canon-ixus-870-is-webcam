@@ -26,6 +26,7 @@ struct H264Decoder::Impl {
 
     std::string last_error;
     std::vector<uint8_t> annex_b_buf;  // reusable buffer for AVCC->Annex B conversion
+    std::vector<uint8_t> stored_idr;   // first IDR frame data for re-injection on decode failure
 };
 
 H264Decoder::H264Decoder() : impl_(std::make_unique<Impl>()) {}
@@ -103,6 +104,13 @@ bool H264Decoder::decode(const uint8_t* data, size_t size, RGBFrame& rgb_out) {
     if (!impl_->ctx) {
         impl_->last_error = "Decoder not initialized";
         return false;
+    }
+
+    // Store first IDR frame for later re-injection on decode failure.
+    // AVCC format: first NAL type is at byte 4 (after 4-byte length prefix).
+    if (impl_->stored_idr.empty() && size >= 5 && (data[4] & 0x1F) == 5) {
+        impl_->stored_idr.assign(data, data + size);
+        fprintf(stderr, "H.264 decoder: stored IDR frame (%zu bytes) for recovery\n", size);
     }
 
     // Sanitize AVCC data before feeding to FFmpeg.
@@ -285,6 +293,21 @@ have_frame:
 
     av_frame_unref(impl_->frame);
     return true;
+}
+
+bool H264Decoder::reinject_idr(RGBFrame& rgb_out) {
+    if (!impl_->ctx || impl_->stored_idr.empty()) {
+        impl_->last_error = "No stored IDR available";
+        return false;
+    }
+
+    // Flush the decoder to clear stale state
+    avcodec_flush_buffers(impl_->ctx);
+
+    // Re-decode the stored IDR frame
+    fprintf(stderr, "H.264 decoder: re-injecting stored IDR (%zu bytes)\n",
+            impl_->stored_idr.size());
+    return decode(impl_->stored_idr.data(), impl_->stored_idr.size(), rgb_out);
 }
 
 bool H264Decoder::flush(RGBFrame& rgb_out) {

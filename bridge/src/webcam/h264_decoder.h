@@ -27,6 +27,10 @@ public:
     // Flush decoder (get any remaining buffered frames)
     bool flush(RGBFrame& rgb_out);
 
+    // Reset decoder and re-feed stored IDR to recover from lost P-frames.
+    // Returns true if IDR was successfully re-decoded.
+    bool reinject_idr(RGBFrame& rgb_out);
+
     void shutdown();
 
     std::string get_last_error() const;
