@@ -2165,3 +2165,32 @@ Total: 349 decoded, 202 drops, 432 unique, 30 IDRs
 **Root cause**: `call_func_ptr(FW_CreateMessageQueue, ...)` itself interferes with the recording pipeline. The DryOS queue allocation likely affects memory regions or kernel state that the JPCORE DMA or recording pipeline depends on. Even without using the queue for notifications, merely creating it caused frame delivery to drop from 404 to 62.
 
 **Conclusion**: DryOS message queues are NOT viable for this use case. The seqlock at 0xFF000 with msleep(10) polling remains the best working approach. Future improvements should avoid calling DryOS allocation functions (CreateMessageQueue, CreateSemaphore) from the webcam module context.
+
+### v28a — msleep Tuning Experiments
+
+**Goal**: Reduce the msleep(10) delays in the seqlock polling loop to improve frame throughput beyond v26g's 22fps baseline.
+
+**Key insights discovered**:
+
+1. **Cache is our friend, not the enemy**: The uncached alias (0x400FF000) reads DMA-corrupted physical memory directly. The CPU cache PROTECTS us — spy_ring_write writes to the cache on the same single-core CPU, and we read from the same cache. No cache coherency problem exists. (Tested: 26 decoded / 83 produced with uncached reads.)
+
+2. **msleep is for DryOS scheduling, not cache eviction**: The msleep(10) yields the CPU so movie_record_task can run spy_ring_write. Without yielding, the PTP task monopolizes the CPU and the recording pipeline starves.
+
+3. **Both msleeps are needed**: Removing the second msleep (after detecting new data) → 28 frames in 20s. The PTP task enters a tight read-process-read loop without yielding, starving the pipeline.
+
+4. **msleep(5) is unreliable**: Both msleeps at 5ms → 40 frames. The DryOS scheduler tick may be 10ms, making msleep(5) unreliable for CPU yielding. Also starves the recording pipeline (production dropped from 432 to 317).
+
+**Results table**:
+
+| Wait msleep | After-detect msleep | Produced | Decoded | Rate |
+|-------------|---------------------|----------|---------|------|
+| 10ms | 10ms (v26g baseline) | 457 | 404 | 88% |
+| 10ms | 10ms (v27d revert) | 432 | 349 | 81% |
+| 5ms | 5ms | 317 | 40 | 13% |
+| 10ms | 0ms (uncached reads) | 83 | 26 | 31% |
+| 10ms | 0ms (cached reads) | 28 | 18 | 64% |
+| 10ms | 1ms | 491 | 386 | 79% |
+
+**Best result**: msleep(10) wait + msleep(1) after detection: 491 produced / 386 decoded. Camera produced MORE frames (491 vs 457) but delivery rate slightly lower (79% vs 88%). Absolute decoded count is similar to baseline (386 vs 404).
+
+**Conclusion**: The msleep(10)/msleep(1) hybrid is roughly equivalent to dual msleep(10). The real bottleneck is the single-slot seqlock architecture — regardless of polling speed, frames get overwritten between PTP polls. Reducing msleep doesn't fundamentally change throughput because the seqlock can only hold one frame at a time.

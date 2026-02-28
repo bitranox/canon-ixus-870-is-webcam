@@ -255,9 +255,14 @@ static int capture_frame_h264(void)
         }
     }
 
-    // Read frame via seqlock protocol — v26g proven approach.
-    // msleep(10) between polls allows DryOS task switching to evict
-    // stale cache lines for the spy header.
+    // Read frame via seqlock protocol.
+    // msleep(10) yields CPU to DryOS so spy_ring_write (in movie_record_task)
+    // gets scheduled. On single-core ARM926, cache is coherent — spy_ring_write
+    // writes hdr[1..3] to the CPU cache, we read from the same cache. No cache
+    // eviction needed; the msleep is purely for task scheduling.
+    // After detecting new hdr[3], hdr[1]/hdr[2] are already in cache (written
+    // by spy_ring_write before the second hdr[3]++ increment), so no second
+    // msleep is needed before reading.
     {
         static unsigned int last_seq = 0;
         int polls;
@@ -274,10 +279,8 @@ static int capture_frame_h264(void)
                 continue;
             }
 
-            // New frame detected. msleep(10) ensures cache eviction for
-            // both spy header and frame data before memcpy.
-            msleep(10);
-
+            // Frame ready. Minimal yield so recording pipeline stays scheduled.
+            msleep(1);
             src_ptr = (unsigned char *)hdr[1];
             size = hdr[2];
             if (!src_ptr || size == 0) continue;

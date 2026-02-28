@@ -162,6 +162,11 @@ Our patch accepts STATE 3 or 4 (original firmware only accepts 4).
 **Cause**: The DryOS queue allocation likely affects memory regions or kernel state that JPCORE DMA or the recording pipeline depends on. The `call_func_ptr` call to firmware allocation functions from CHDK module context is not safe during active recording.
 **Implication**: Cannot use DryOS message queues (or likely semaphores/other kernel objects created at runtime) for webcam frame delivery. Must use the seqlock approach with polling.
 
+### 11. CPU cache protects shared memory from DMA corruption
+**Evidence**: Uncached reads via 0x400FF000 → 26 decoded / 83 produced (seqlock reads garbage). Cached reads via 0x000FF000 → 349-404 decoded. spy_ring_write writes to cache, webcam.c reads from same cache (single-core ARM926).
+**Mechanism**: JPCORE DMA corrupts physical memory at 0xFF000 (proven fact #4). The CPU cache holds the correct values written by spy_ring_write. msleep(10) between polls is for DryOS task scheduling (letting movie_record_task run), NOT for cache eviction.
+**Implication**: Never use uncached alias for shared memory reads. The cached address (0x000FF000) is correct. Both msleep calls in the seqlock loop are for CPU yielding — removing either one starves the recording pipeline.
+
 ## Current Webcam Data Flow
 
 ```
