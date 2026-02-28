@@ -46,8 +46,8 @@ static void spy_debug_add(char t0, char t1, char t2, char t3, unsigned int value
 static void spy_debug_send(void)
 {
     volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    unsigned int wr = hdr[8];
-    unsigned int rd = hdr[9];
+    unsigned int wr = hdr[12];
+    unsigned int rd = hdr[13];
     unsigned int next_wr = (wr + 1) % DBG_QUEUE_DEPTH;
     unsigned int i;
     volatile unsigned char *slot;
@@ -62,7 +62,7 @@ static void spy_debug_send(void)
 
     // ARM drain write buffer before advancing index
     asm volatile("mcr p15, 0, %0, c7, c10, 4" : : "r"(0));
-    hdr[8] = next_wr;
+    hdr[12] = next_wr;
 }
 
 // SD write prevention: clear +0x80 (is_open flag) in the ring buffer struct.
@@ -128,12 +128,12 @@ static int __attribute__((used,noinline)) spy_take_sem_short(int sem, int timeou
 // NOT viable — causes context switches that starve the recording pipeline.
 //
 // Shared memory layout at 0x000FF000:
-//   [0] magic    = 0x52455753 when active (set by webcam.c)
-//   [1] ptr      = frame data pointer (set by writer, seqlock)
-//   [2] size     = frame data size (set by writer, seqlock)
-//   [3] seq      = sequence counter (odd=writing, even=stable)
-//   [8] dbg_wr   = debug queue write index
-//   [9] dbg_rd   = debug queue read index
+//   [0]  magic    = 0x52455753 when active (set by webcam.c)
+//   [1]  ptr      = frame data pointer (set by writer, seqlock)
+//   [2]  size     = frame data size (set by writer, seqlock)
+//   [3]  seq      = sequence counter (odd=writing, even=stable)
+//   [12] dbg_wr   = debug queue write index
+//   [13] dbg_rd   = debug queue read index
 
 static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, unsigned int size)
 {

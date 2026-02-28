@@ -42,10 +42,13 @@ Max entries per frame: 62 (12 + 62x8 = 508 bytes, fits in one 512-byte slot).
 The debug queue lives in the spy buffer memory region at `0x000FF000`:
 
 ```
-0xFF000 + 0x00  hdr[0..5]   existing spy protocol (magic, ptr, size, count, unused, sem)
-0xFF000 + 0x18  hdr[6..7]   reserved
-0xFF000 + 0x20  hdr[8]      debug queue write_idx (0..3), written by movie_rec.c only
-0xFF000 + 0x24  hdr[9]      debug queue read_idx  (0..3), written by webcam.c only
+0xFF000 + 0x00  hdr[0]      magic (0x52455753 = active)
+0xFF000 + 0x04  hdr[1]      frame data pointer (seqlock, written by movie_rec.c)
+0xFF000 + 0x08  hdr[2]      frame data size (seqlock, written by movie_rec.c)
+0xFF000 + 0x0C  hdr[3]      seqlock sequence counter (odd=writing, even=stable)
+0xFF000 + 0x10  hdr[4..11]  reserved
+0xFF000 + 0x30  hdr[12]     debug queue write_idx (0..3), written by movie_rec.c only
+0xFF000 + 0x34  hdr[13]     debug queue read_idx  (0..3), written by webcam.c only
 
 0xFF000 + 0x40  slot 0 (512 bytes): [0-1] payload_size (u16 LE), [2-3] reserved, [4..511] payload
 0xFF000 + 0x240 slot 1 (512 bytes)

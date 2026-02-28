@@ -310,6 +310,11 @@ int main(int argc, char* argv[]) {
     int unique_frames = 0;
     int duplicate_frames = 0;
 
+    // Timing: measure FPS from first to last frame (excludes startup)
+    std::chrono::steady_clock::time_point first_frame_time;
+    std::chrono::steady_clock::time_point last_frame_time;
+    bool has_first_frame = false;
+
     while (g_running) {
         // Check timeout
         if (opts.timeout_sec > 0) {
@@ -560,6 +565,11 @@ int main(int argc, char* argv[]) {
         if (opts.no_decode) {
             frames_received++;
             total_bytes += static_cast<int>(mjpeg.data.size());
+            {
+                auto frame_time = std::chrono::steady_clock::now();
+                if (!has_first_frame) { first_frame_time = frame_time; has_first_frame = true; }
+                last_frame_time = frame_time;
+            }
             if (frames_received == 1) {
                 const char* fmt_name = "JPEG";
                 if (mjpeg.format == ptp::FRAME_FMT_UYVY) fmt_name = "UYVY";
@@ -662,6 +672,11 @@ int main(int argc, char* argv[]) {
 
         frames_received++;
         total_bytes += static_cast<int>(mjpeg.data.size());
+        {
+            auto frame_time = std::chrono::steady_clock::now();
+            if (!has_first_frame) { first_frame_time = frame_time; has_first_frame = true; }
+            last_frame_time = frame_time;
+        }
 
         if (opts.verbose) {
             printf("\rFrame %u: %dx%d, %zu bytes, cam=%ux%u  ",
@@ -706,11 +721,19 @@ int main(int argc, char* argv[]) {
     printf("  Unique data: %d frames\n", unique_frames);
     printf("  Duplicate data: %d frames (identical to previous)\n", duplicate_frames);
     printf("  Last cam frame#: %u\n", last_frame_num);
+    if (has_first_frame) {
+        auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            last_frame_time - first_frame_time).count();
+        if (duration_ms > 0) {
+            float recv_fps = (total_received - 1) * 1000.0f / duration_ms;
+            float total_fps = (total_received + total_dropped - 1) * 1000.0f / duration_ms;
+            printf("  Duration: %.1f seconds (first frame to last)\n", duration_ms / 1000.0f);
+            printf("  Decoded FPS: %.1f\n", recv_fps);
+            printf("  Total FPS (incl. drops): %.1f\n", total_fps);
+        }
+    }
     if (last_frame_num > 0) {
-        int expected = (int)last_frame_num;
-        int actual = total_received + total_dropped;
-        printf("  Camera produced: ~%d frames, bridge saw: %d (%.1f%%)\n",
-               expected, actual, expected > 0 ? (actual * 100.0f / expected) : 0.0f);
+        printf("  Camera produced: ~%u frames\n", last_frame_num);
     }
     printf("=======================\n");
 

@@ -76,12 +76,12 @@ static int idr_injected = 0;
 // starve the recording pipeline (proven facts #10).
 // ============================================================
 #define WEBCAM_SPY_ADDR    ((volatile unsigned int *)0x000FF000)
-// spy[0] = magic    (0x52455753 = active, set by webcam.c)
-// spy[1] = ptr      (frame data pointer, set by movie_rec.c, seqlock)
-// spy[2] = size     (frame data size, set by movie_rec.c, seqlock)
-// spy[3] = seq      (sequence counter: odd=writing, even=stable)
-// spy[8] = dbg_wr   (debug queue write index)
-// spy[9] = dbg_rd   (debug queue read index)
+// spy[0]  = magic    (0x52455753 = active, set by webcam.c)
+// spy[1]  = ptr      (frame data pointer, set by movie_rec.c, seqlock)
+// spy[2]  = size     (frame data size, set by movie_rec.c, seqlock)
+// spy[3]  = seq      (sequence counter: odd=writing, even=stable)
+// spy[12] = dbg_wr   (debug queue write index)
+// spy[13] = dbg_rd   (debug queue read index)
 
 // ============================================================
 // H.264 frame capture from recording spy buffer
@@ -104,11 +104,11 @@ static int capture_frame_h264(void)
     if (!recording_active || !frame_data_buf) return 0;
     if (hdr[0] != 0x52455753) return 0;
 
-    // Check debug queue (lock-free SPSC: we read hdr[8]=write_idx, we own hdr[9]=read_idx)
+    // Check debug queue (lock-free SPSC: we read hdr[12]=write_idx, we own hdr[13]=read_idx)
     // Validate "DBG!" magic at slot[4..7] to reject DMA-corrupted indices.
     {
-        unsigned int wr = hdr[8];
-        unsigned int rd = hdr[9];
+        unsigned int wr = hdr[12];
+        unsigned int rd = hdr[13];
         if (wr != rd && wr < 4 && rd < 4) {
             volatile unsigned char *slot =
                 (volatile unsigned char *)(0x000FF040 + rd * 512);
@@ -125,10 +125,10 @@ static int capture_frame_h264(void)
                 frame_width = 640;
                 frame_height = 480;
                 frame_format = WEBCAM_FMT_DEBUG;
-                hdr[9] = (rd + 1) % 4;
+                hdr[13] = (rd + 1) % 4;
                 return (int)dbg_size;
             }
-            hdr[9] = (rd + 1) % 4;  // Invalid slot, skip
+            hdr[13] = (rd + 1) % 4;  // Invalid slot, skip
         }
     }
 

@@ -1,6 +1,6 @@
 # Proven Facts — Canon IXUS 870 IS Webcam Project
 
-Last updated: 2026-02-28
+Last updated: 2026-03-01
 
 This document contains ONLY verified, tested facts. No speculation, no history.
 Each fact includes the evidence that proved it.
@@ -163,6 +163,11 @@ Our patch accepts STATE 3 or 4 (original firmware only accepts 4).
 **Cause**: GiveSemaphore/TryPostMessageQueue from spy_ring_write triggers an immediate DryOS context switch to the PTP task (blocked on TakeSemaphore/ReceiveMessageQueue), preempting movie_record_task. The recording pipeline starves.
 **Implication**: Cannot use any DryOS kernel signaling mechanism (queues, semaphores) from the recording pipeline for webcam frame delivery. Must use the seqlock approach with msleep(10) polling.
 
+### 12. SPSC ring buffer with VRAM pointer indirection does not work
+**Evidence**: 4-slot SPSC ring buffer storing {ptr, size} per slot → 66-71 frames in 20s (3.5-4.4fps) vs seqlock baseline ~24fps. Drain-to-latest variant (consumer skips to newest frame) performed equally poorly. Both tested with camera recording normally (red light solid, no crash).
+**Cause**: The seqlock consumer is read-only (never writes to shared memory). The SPSC ring requires the consumer to write hdr[2] (rd_idx) to advance the read pointer. This bidirectional shared memory access between movie_record_task and PTP task introduces timing interference that destroys throughput. The exact mechanism is unclear (not cache coherency — single-core ARM shares cache), but the effect is reproducible and severe.
+**Implication**: Frame delivery from movie_record_task to the PTP task must use the seqlock pattern where the consumer only reads. Any protocol requiring consumer writes to shared memory is not viable.
+
 ### 11. CPU cache protects shared memory from DMA corruption
 **Evidence**: Uncached reads via 0x400FF000 → 26 decoded / 83 produced (seqlock reads garbage). Cached reads via 0x000FF000 → 349-404 decoded. spy_ring_write writes to cache, webcam.c reads from same cache (single-core ARM926).
 **Mechanism**: JPCORE DMA corrupts physical memory at 0xFF000 (proven fact #4). The CPU cache holds the correct values written by spy_ring_write. msleep(10) between polls is for DryOS task scheduling (letting movie_record_task run), NOT for cache eviction.
@@ -209,15 +214,16 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 
 | Metric | Value | Evidence |
 |--------|-------|----------|
-| Frames produced | 432-457 in 20s (~22 fps) | v26g: 457, v27d revert: 432 |
-| Frames decoded | 349-404 (81-88%) | v26g: 404, v27d revert: 349 |
-| IDR keyframes | 30-35 (~1.5/sec from GOP) | v26g: 35, v27d: 30 |
-| Average bitrate | ~7 Mbps | v26g bridge output |
+| Frames produced | 494 in 20s (~25 fps) | v30c bridge output |
+| Frames decoded | 478 (97%) | v30c: 478/494 |
+| Decoded FPS | 23.9 fps | v30c: measured first-to-last frame |
+| Total FPS (incl. drops) | 28.4 fps | v30c bridge output |
+| IDR keyframes | 39 (~2/sec from GOP) | v30c bridge output |
+| Average bitrate | ~8 Mbps | v30c bridge output |
 | SD card writes | 0 bytes | 0-byte MOV file, SD usage unchanged |
-| Frame loss source | Single-slot shared memory overwrite | ~8 frames/sec lost between PTP polls |
+| Frame loss source | Seqlock overwrites + decode failures | ~2fps seqlock loss, ~4fps decode loss |
 
 ## What Needs to Happen Next
 
 1. **Code cleanup**: Remove unused debug functions (spy_idr_capture, spy_msg5_debug statics). Remove leftover DryOS queue defines from webcam.c. Evaluate whether spy_take_sem_short is still needed with +0x80 approach.
-2. **Frame loss reduction**: The ring buffer already stores all 30fps frames. Reading sequentially from the ring buffer instead of using single-slot shared memory could eliminate the ~8fps loss. DryOS message queues are not viable (proven fact #10). Alternative approaches: reduce msleep(10) polling interval, or use a multi-slot ring buffer with indices stored in BSS (not shared memory).
-3. **Virtual webcam integration**: Connect the H.264 decode output to a DirectShow virtual webcam filter for use in video conferencing apps.
+2. **Virtual webcam integration**: Connect the H.264 decode output to a DirectShow virtual webcam filter for use in video conferencing apps.

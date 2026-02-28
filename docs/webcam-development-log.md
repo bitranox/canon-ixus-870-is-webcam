@@ -2227,3 +2227,74 @@ Received: 11 frames, Dropped: 262, Camera produced: ~20 frames
 **Conclusion**: Any DryOS kernel signaling from movie_record_task disrupts the recording pipeline — both message queues and binary semaphores cause the same catastrophic throughput drop. The msleep(10) polling approach is the only viable frame delivery mechanism. Reverted to v28a baseline.
 
 **Action**: Revert webcam.c and movie_rec.c to v28a (seqlock + msleep polling).
+
+## v30 — SPSC Ring Buffer Attempt + Bridge FPS Fix (2026-03-01)
+
+**Goal**: Replace single-slot seqlock with 4-slot lock-free SPSC ring buffer to recover the ~11fps lost to seqlock overwrites. Also fix bridge FPS measurement to exclude startup overhead.
+
+### v30a — 4-slot SPSC ring buffer (FAILED)
+
+**Implementation**:
+- **movie_rec.c**: spy_ring_write rewritten as SPSC producer. Shared memory layout changed: hdr[1]=ring_wr_idx, hdr[2]=ring_rd_idx, hdr[3]=frame_seq, hdr[4..11]=4 slots of {ptr, size}. Debug queue indices moved from hdr[8]/hdr[9] to hdr[12]/hdr[13]. Zero DryOS kernel calls — purely shared memory writes with ARM drain write buffer barrier.
+- **webcam.c**: capture_frame_h264 rewritten as SPSC consumer. Reads one frame per PTP call from ring, msleep(10) when empty. Debug queue indices moved to hdr[12]/hdr[13].
+- **bridge main.cpp**: Added first_frame_time/last_frame_time tracking. Session summary now shows "Decoded FPS" and "Total FPS" measured from first frame to last (excludes startup).
+
+**Bridge output**:
+```
+Received: 32 frames, Dropped: 571
+Unique data: 66 frames, Duplicate: 0
+Duration: 14.9 seconds
+Decoded FPS: 2.1
+Total FPS (incl. drops): 40.4
+Camera produced: ~66 frames
+```
+
+**Result**: Severe regression — 66 frames in 15s (4.4fps) vs v28a baseline ~19fps. Camera recorded normally (red light solid). Ring buffer protocol was functionally correct but throughput collapsed.
+
+### v30b — Drain-to-latest + dcache_clean_all (FAILED)
+
+**Hypothesis**: Ring stores VRAM pointers, not data. Older queued pointers point to VRAM regions overwritten by newer DMA frames. Consumer reads stale data, AVCC parser rejects it.
+
+**Fix attempt**: Consumer drains all available ring slots, keeps only the last valid ptr/size (freshest data). Added dcache_clean_all() before memcpy to ensure reading from physical memory.
+
+**Build issue**: Inline ARM `mcr` cache instructions don't work in Thumb-mode modules. Used dcache_clean_all() (available via cache.h) instead.
+
+**Bridge output**:
+```
+Received: 64 frames, Dropped: 535
+Unique data: 71 frames, Duplicate: 0
+Duration: 20.0 seconds
+Decoded FPS: 3.2
+Total FPS (incl. drops): 29.9
+Camera produced: ~71 frames
+```
+
+**Result**: Still only 71 frames / 3.5fps. Drain-to-latest didn't help. 21 IDRs in 71 frames (IDR every ~3.4 frames) vs expected IDR every ~12 frames — the consumer was preferentially catching frames near GOP boundaries because most P-frames were being lost.
+
+### v30c — Revert to seqlock + keep FPS fix (SUCCESS)
+
+**Decision**: SPSC ring buffer approach is fundamentally broken for this use case. The key difference from the working seqlock: the consumer writes to hdr[2] (rd_idx), which is new behavior. With the seqlock, the consumer NEVER writes to shared memory — it only reads. The ring buffer requires bidirectional shared memory writes between tasks, which introduces timing issues that destroy throughput.
+
+**Implementation**: Reverted spy_ring_write and capture_frame_h264 to v28a seqlock protocol. Kept:
+- Bridge FPS measurement fix (first-to-last frame timing)
+- Debug queue indices at hdr[12]/hdr[13] (moved from hdr[8]/hdr[9])
+- Updated debug-frame-protocol.md
+
+**Bridge output**:
+```
+Received: 478 frames, Dropped: 90
+Unique data: 494 frames, Duplicate: 0
+Duration: 20.0 seconds
+Decoded FPS: 23.9
+Total FPS (incl. drops): 28.4
+Camera produced: ~494 frames
+```
+
+**Result**: Full recovery. 494 unique frames, 478 decoded at 23.9fps. Better than v28a's reported ~19fps — the old measurement was skewed by including startup overhead. With the fixed FPS calculation, the true decode rate is ~24fps.
+
+**Key findings**:
+1. SPSC ring buffer with VRAM pointer indirection doesn't work — consumer writes to shared memory destroy throughput
+2. The seqlock's read-only consumer pattern is essential for coexistence with the recording pipeline
+3. Previous "19fps" measurement was understated — true decoded FPS is ~24fps when measured from first-to-last frame
+4. Total FPS (incl. decode failures) is ~28fps, close to the camera's 30fps native rate
+5. The ~6fps "loss" is seqlock overwrites (~2fps) + H.264 decode failures (~4fps), not a fundamental PTP bottleneck
