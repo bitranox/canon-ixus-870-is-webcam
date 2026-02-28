@@ -2074,3 +2074,13 @@ Camera produces 30fps internally but we receive ~22fps. Sources of loss:
 2. **PTP task scheduling overhead**: Each PTP request takes ~37ms (msleep(10) + memcpy + DryOS scheduling), giving ~27 req/sec max throughput.
 
 The camera's ring buffer already stores all frames — during normal recording, the MOV file has no frame loss. A future improvement could read frames from the ring buffer sequentially instead of using the single-slot shared memory approach.
+
+### v26h — Remove msleep(10) from frame read path (FAILED)
+
+**Approach**: Removed the `msleep(10)` delay between detecting a new seqlock sequence and reading the frame data in webcam.c. Added cache clean+invalidate MCR in spy_ring_write for the shared memory header cache line to replace the sleep-based coherency.
+
+**Result**: 10 frames in initial burst, then `gf_rc=-1` for remaining 20 seconds. Camera only produced 26 frames total (vs 457 normally). Pipeline starved — the tight seqlock polling loop without sleep monopolized DryOS task scheduling, preventing the recording pipeline from running.
+
+**Conclusion**: Cannot remove msleep from the single-slot seqlock approach. DryOS cooperative multitasking requires yielding (msleep) in polling loops. The 4-slot SPSC ring buffer approach would eliminate this bottleneck by decoupling producer/consumer timing — no tight polling needed, just check write_idx != read_idx.
+
+Reverted to working msleep(10) state.
