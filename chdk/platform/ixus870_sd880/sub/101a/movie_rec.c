@@ -92,6 +92,14 @@ static void __attribute__((used,noinline)) spy_cache_invalidate(unsigned char *p
     }
 }
 
+// Check if webcam is active. Returns 1 to skip error path, 0 for normal error handling.
+// Called from error paths in sub_FF85D98C_my to prevent STATE=1 (permanent pipeline death).
+static int __attribute__((used,noinline)) spy_skip_error_path(void)
+{
+    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
+    return (hdr[0] == 0x52455753) ? 1 : 0;
+}
+
 // Wrapper for TakeSemaphore (sub_FF8274B4) with shorter timeout when webcam is active.
 // Original firmware uses 1000ms timeout; SD card write stalls block the pipeline for
 // 2-4 seconds, causing PTP stalls (gf_rc=-1) on the bridge side.
@@ -393,6 +401,15 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "BL      sub_FF879164\n"
                  "MOV     R0, #1\n"
                  "B       loc_FF85DC5C\n"
+                 // Error bypass for webcam: skip drain + STATE=1, just cleanup + exit
+ "spy_err_bypass_1:\n"
+                 "MOV     R0, #1\n"
+                 "BL      sub_FF8EDC88\n"
+                 "B       loc_FF85DB10\n"
+ "spy_err_bypass_2:\n"
+                 "MOV     R0, #0\n"
+                 "BL      sub_FF8EDC88\n"
+                 "B       loc_FF85DB10\n"
  "loc_FF85DB24:\n"
                  "LDR     R12, [SP,#0x30]\n"
                  "CMP     R12, #0\n"
@@ -427,6 +444,10 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "CMP     R0, #9\n"
                  "BNE     loc_FF85DBB4\n"
  "loc_FF85DBA4:\n"
+                 // Webcam active? Skip drain + STATE=1 (permanent pipeline death)
+                 "BL      spy_skip_error_path\n"
+                 "CMP     R0, #0\n"
+                 "BNE     spy_err_bypass_1\n"
                  "BL      sub_FF930358\n"
                  "MOV     R0, #0x90000\n"
                  "STR     R5, [R6,#0x3C]\n"
@@ -436,6 +457,9 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "CMP     R0, #0\n"
                  "BEQ     loc_FF85DBD0\n"
  "loc_FF85DBC0:\n"
+                 "BL      spy_skip_error_path\n"
+                 "CMP     R0, #0\n"
+                 "BNE     spy_err_bypass_1\n"
                  "BL      sub_FF930358\n"
                  "MOV     R0, #0xA0000\n"
                  "STR     R5, [R6,#0x3C]\n"
@@ -472,6 +496,9 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "BL      spy_take_sem_short\n"
                  "CMP     R0, #9\n"
                  "BNE     loc_FF85DC64\n"
+                 "BL      spy_skip_error_path\n"
+                 "CMP     R0, #0\n"
+                 "BNE     spy_err_bypass_2\n"
                  "BL      sub_FF930358\n"
                  "MOV     R0, #0x90000\n"
                  "STR     R5, [R6,#0x3C]\n"
@@ -484,6 +511,9 @@ void __attribute__((naked,noinline)) sub_FF85D98C_my(){
                  "LDR     R0, [SP,#0x38]\n"
                  "CMP     R0, #0\n"
                  "BEQ     loc_FF85DC84\n"
+                 "BL      spy_skip_error_path\n"
+                 "CMP     R0, #0\n"
+                 "BNE     spy_err_bypass_2\n"
                  "BL      sub_FF930358\n"
                  "MOV     R0, #0xA0000\n"
                  "STR     R5, [R6,#0x3C]\n"
