@@ -254,7 +254,7 @@ webcam.c (CHDK module)
     │ polls dual-slot seqlock (100 × msleep(10))
     │ peeks AVCC headers from camera RAM to determine exact frame size
     │ memcpy only exact frame bytes (not full buffer)
-    │ returns single frame (H264) or multi-frame batch (H264_MULTI)
+    │ returns single H.264 frame per PTP response
     ▼
 PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 ```
@@ -333,7 +333,7 @@ With yield restored: stable operation, correct frame sizes.
 
 **Optimization**: Read AVCC length headers directly from camera RAM (src[0..3], ~20 bytes of header reads), compute exact frame size, then memcpy only that amount. Reduces worst-case copy from 64KB to actual frame size (typically 9-45KB). Less CPU time = more time for ISP/display/IS motor tasks.
 
-**Implementation**: Both single-frame and multi-frame paths peek AVCC from `src` (camera RAM pointer) before any memcpy. Multi-frame path copies directly to multi_frame_buf, skipping intermediate frame_data_buf.
+**Implementation**: Peek AVCC length headers from `src` (camera RAM pointer) before any memcpy. Walk NAL units to find VCL NAL (type 1 or 5), compute exact frame size, then memcpy only that amount into frame_data_buf.
 
 ### 25. 128KB multi_frame_buf malloc causes dark screen + IS motor clicking
 
