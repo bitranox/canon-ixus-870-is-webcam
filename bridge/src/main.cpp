@@ -448,6 +448,10 @@ int main(int argc, char* argv[]) {
     int64_t dbg_total_frame_bytes = 0;
     int dbg_min_frame_size = INT_MAX;
     int dbg_max_frame_size = 0;
+    double dbg_rtt_min_ms = 1e9;
+    double dbg_rtt_max_ms = 0;
+    double dbg_rtt_total_ms = 0;
+    int dbg_rtt_count = 0;
     std::map<std::string, int> dbg_decode_errors;  // error string -> count
 
     while (g_running) {
@@ -494,6 +498,19 @@ int main(int argc, char* argv[]) {
             // Sleep before retry (failure path only — rarely hit with seqlock).
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
+        }
+
+        // Measure USB PTP round-trip time (frame_start → get_frame return)
+        double rtt_ms = 0;
+        {
+            auto frame_end = std::chrono::steady_clock::now();
+            rtt_ms = std::chrono::duration<double, std::milli>(frame_end - frame_start).count();
+            if (opts.debug) {
+                dbg_rtt_total_ms += rtt_ms;
+                dbg_rtt_count++;
+                if (rtt_ms < dbg_rtt_min_ms) dbg_rtt_min_ms = rtt_ms;
+                if (rtt_ms > dbg_rtt_max_ms) dbg_rtt_max_ms = rtt_ms;
+            }
         }
 
         // Check for duplicate frames
@@ -898,11 +915,12 @@ int main(int argc, char* argv[]) {
             if (opts.debug && mjpeg.format == ptp::FRAME_FMT_H264) {
                 auto t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
                 AvccInfo avcc = check_avcc(mjpeg.data.data(), mjpeg.data.size());
-                fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu nal=0x%02X(%s) avcc=%s\n",
+                fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu nal=0x%02X(%s) avcc=%s rtt=%.1fms\n",
                         t, mjpeg.frame_num, mjpeg.data.size(),
                         mjpeg.data.size() >= 5 ? mjpeg.data[4] : 0,
                         avcc.nal_name,
-                        avcc.valid ? "OK" : avcc.problem);
+                        avcc.valid ? "OK" : avcc.problem,
+                        rtt_ms);
             }
 
             // Print stats periodically
@@ -942,11 +960,11 @@ int main(int argc, char* argv[]) {
                     decode_streak = 0;
                     auto t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
                     AvccInfo avcc = check_avcc(mjpeg.data.data(), mjpeg.data.size());
-                    fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu nal=0x%02X(%s) avcc=%s dec=FAIL err=\"%s\" streak=0\n",
+                    fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu nal=0x%02X(%s) avcc=%s dec=FAIL err=\"%s\" streak=0 rtt=%.1fms\n",
                             t, mjpeg.frame_num, mjpeg.data.size(),
                             mjpeg.data.size() >= 5 ? mjpeg.data[4] : 0,
                             avcc.nal_name, avcc.valid ? "OK" : avcc.problem,
-                            decode_err.c_str());
+                            decode_err.c_str(), rtt_ms);
                 }
                 frames_dropped++;
                 continue;
@@ -962,11 +980,11 @@ int main(int argc, char* argv[]) {
                 }
                 auto t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
                 AvccInfo avcc = check_avcc(mjpeg.data.data(), mjpeg.data.size());
-                fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu nal=0x%02X(%s) avcc=%s dec=OK streak=%d\n",
+                fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu nal=0x%02X(%s) avcc=%s dec=OK streak=%d rtt=%.1fms\n",
                         t, mjpeg.frame_num, mjpeg.data.size(),
                         mjpeg.data.size() >= 5 ? mjpeg.data[4] : 0,
                         avcc.nal_name, avcc.valid ? "OK" : avcc.problem,
-                        decode_streak);
+                        decode_streak, rtt_ms);
             }
 #else
             static int h264_count = 0;
@@ -995,8 +1013,8 @@ int main(int argc, char* argv[]) {
                 dbg_decode_errors[decode_err]++;
                 decode_streak = 0;
                 auto t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
-                fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu dec=FAIL err=\"%s\" streak=0\n",
-                        t, mjpeg.frame_num, mjpeg.data.size(), decode_err.c_str());
+                fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu dec=FAIL err=\"%s\" streak=0 rtt=%.1fms\n",
+                        t, mjpeg.frame_num, mjpeg.data.size(), decode_err.c_str(), rtt_ms);
             }
             frames_dropped++;
             continue;
@@ -1011,8 +1029,8 @@ int main(int argc, char* argv[]) {
                 max_streak_end = mjpeg.frame_num;
             }
             auto t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
-            fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu dec=OK streak=%d\n",
-                    t, mjpeg.frame_num, mjpeg.data.size(), decode_streak);
+            fprintf(stderr, "[DBG] t=%.3f RECV cam#%u sz=%zu dec=OK streak=%d rtt=%.1fms\n",
+                    t, mjpeg.frame_num, mjpeg.data.size(), decode_streak, rtt_ms);
         }
 
         // Send to virtual webcam
@@ -1133,6 +1151,10 @@ int main(int argc, char* argv[]) {
         if (max_decode_streak > 0) {
             fprintf(stderr, "  Max streak:   %d (cam#%d-cam#%d)\n",
                     max_decode_streak, max_streak_start, max_streak_end);
+        }
+        if (dbg_rtt_count > 0) {
+            fprintf(stderr, "  PTP RTT:      min=%.1fms avg=%.1fms max=%.1fms (n=%d)\n",
+                    dbg_rtt_min_ms, dbg_rtt_total_ms / dbg_rtt_count, dbg_rtt_max_ms, dbg_rtt_count);
         }
         fprintf(stderr, "  USB errors:   send=%d recv=%d timeout=%d io=%d\n",
                 usb.send_errors, usb.recv_errors, usb.timeout_errors, usb.io_errors);
