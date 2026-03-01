@@ -55,7 +55,7 @@ static int webcam_stop(void);              // forward declaration for use in web
 
 // Spy buffer: frame data area (H.264 data copied from ring buffer)
 static unsigned char *frame_data_buf = NULL;
-#define SPY_BUF_SIZE (120 * 1024)          // 120 KB — fits two H.264 frames for batch transfer
+#define SPY_BUF_SIZE (130 * 1024)          // 130 KB (2×65KB) — fits two max-size H.264 frames
 
 // IDR injection: the first H.264 frame (IDR) is lost due to a race condition
 // (spy_ring_write fires before PTP polling starts). The IDR data persists at
