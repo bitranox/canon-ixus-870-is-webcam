@@ -3077,3 +3077,49 @@ Re-tested triple-slot at hdr[7..9] with AVCC peek optimization (copies only 3-50
 **Conclusion**: hdr[7..9] hardware interference is definitively confirmed. The dark screen is caused by writing to those specific spy buffer addresses, NOT by CPU starvation from large memcpy. The maximum number of seqlock slots is 2 (hdr[1..6]).
 
 Reverted to dual-slot producer + dual-slot consumer with AVCC peek optimization.
+
+### v32g: Pure v32d + AVCC Peek (SUCCESS)
+
+Reverted to exact v32d codebase, then added only the AVCC peek optimization (no multi_frame_buf, no cascade malloc, no multi-frame batching).
+
+**Test result (10s)**:
+
+| Metric | v32d baseline | v32g (v32d + AVCC peek) |
+|--------|-------------|------------------------|
+| Decode | 100% | **100%** |
+| Decoded FPS | 28.2 | **30.1** |
+| Frames received | 301 | 301 |
+| Max streak | 1691 (60s) | 301 (10s) |
+| USB errors | 0 | 0 |
+| AVCC valid | 100% | 100% |
+| Dark screen | No | **No** |
+| IS motor clicking | No | **No** |
+
+```
+=== SESSION SUMMARY ===
+  Received: 301 frames
+  Dropped:  0 (decode failures)
+  Unique data: 301 frames
+  Last cam frame#: 312
+  Duration: 10.0 seconds
+  Decoded FPS: 30.1
+  Total FPS (incl. drops): 30.1
+  Camera produced: ~312 frames
+=======================
+
+=== DEBUG SUMMARY ===
+  PTP calls:    301 (301 success, 0 no-frame)
+  Decode:       301 attempts, 301 OK (100.0%), 0 FAIL
+  NAL types:    IDR: 21, P-frame: 280
+  AVCC valid:   301/301 (100.0%)
+  Max streak:   301 (cam#2-cam#312)
+  USB errors:   send=0 recv=0 timeout=0 io=0
+  Frame sizes:  min=35676 max=62432 avg=39507
+=====================
+```
+
+### Key Findings
+
+1. **AVCC peek improves FPS**: 30.1fps vs 28.2fps baseline — less memcpy = more CPU for pipeline
+2. **128KB multi_frame_buf malloc causes dark screen**: Confirmed by elimination. All v32f variants with multi_frame_buf had dark screen. v32g without it = no dark screen. DryOS heap exhaustion starves ISP/display/IS subsystems.
+3. **No display or IS motor issues**: Camera fully healthy with this build

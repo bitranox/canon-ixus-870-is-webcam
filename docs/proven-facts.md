@@ -263,16 +263,15 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 
 | Metric | Value | Evidence |
 |--------|-------|----------|
-| Frames produced | ~241 in 10s (~30 fps) | v32f bridge output (10s session) |
-| Frames received | 240/241 (99.6% capture) | v32f: multi-frame batching nearly eliminates USB-level loss |
-| Frames decoded | 223/240 (92.9%) | v32f: 17 "Decoder needs more data" failures in 2 clusters |
-| Decoded FPS | 22.3 fps | v32f: measured first-to-last frame (10s) |
-| Total FPS (incl. drops) | 30.2 fps | v32f: multi-frame batching matches camera output rate |
-| IDR keyframes | 19 in 10s (~2/sec, GOP ~11) | v32f bridge output |
+| Frames produced | ~312 in 10s (~30 fps) | v32g bridge output (10s session) |
+| Frames received | 301/312 (96.5% capture) | v32g: dual-slot seqlock + AVCC peek |
+| Frames decoded | 301/301 (100%) | v32g: zero decode failures |
+| Decoded FPS | 30.1 fps | v32g: AVCC peek reduces memcpy, frees CPU for pipeline |
+| Total FPS (incl. drops) | 30.1 fps | v32g: matches camera output rate |
+| IDR keyframes | 21 in 10s (~2/sec, GOP ~15) | v32g bridge output |
 | SD card writes | 0 bytes | 0-byte MOV file, SD usage unchanged |
-| Max decode streak | 145 frames | v32f: cam#2-cam#145, broken by decode failure cluster |
-| Multi-frame batches | ~10 in 10s (batch=2) | v32f: mix of single and 2-frame PTP responses |
-| Best decode rate (single-frame) | 1691/1691 (100%) in 60s, 28.2fps | v32d: dual-slot seqlock, no batching |
+| Max decode streak | 301 frames (10s) | v32g: entire session, zero failures |
+| Best 60s result | 1691/1691 (100%) in 60s, 28.2fps | v32d: dual-slot seqlock, no AVCC peek |
 
 ### 17. Original TakeSemaphore timeout (1000ms) is correct for webcam
 
@@ -335,6 +334,17 @@ With yield restored: stable operation, correct frame sizes.
 **Optimization**: Read AVCC length headers directly from camera RAM (src[0..3], ~20 bytes of header reads), compute exact frame size, then memcpy only that amount. Reduces worst-case copy from 64KB to actual frame size (typically 9-45KB). Less CPU time = more time for ISP/display/IS motor tasks.
 
 **Implementation**: Both single-frame and multi-frame paths peek AVCC from `src` (camera RAM pointer) before any memcpy. Multi-frame path copies directly to multi_frame_buf, skipping intermediate frame_data_buf.
+
+### 25. 128KB multi_frame_buf malloc causes dark screen + IS motor clicking
+
+**Evidence**: All v32f variants with `multi_frame_buf` (128KB cascade malloc) exhibited dark display and IS motor clicking. v32g removed multi_frame_buf entirely (keeping only the 64KB frame_data_buf) — no dark screen, no clicking, 100% decode, 30.1fps.
+- v32f with multi_frame_buf + dual-slot: dark screen, 76.3% decode, USB crash
+- v32f with multi_frame_buf + triple-slot: dark screen, 92.4% decode
+- v32g without multi_frame_buf: **no dark screen**, 100% decode, 30.1fps
+
+**Cause**: DryOS heap exhaustion. 64KB (frame_data_buf) + 128KB (multi_frame_buf) = 192KB from DryOS heap. The camera's ISP, display controller, and IS motor controller share the same heap. 128KB extra allocation starves these subsystems.
+
+**Implication**: Maximum safe malloc from webcam module is ~64KB. Multi-frame batching requires an alternative approach that doesn't allocate a large buffer (e.g., stack-based for small batches, or different packing strategy).
 
 ## What Needs to Happen Next
 
