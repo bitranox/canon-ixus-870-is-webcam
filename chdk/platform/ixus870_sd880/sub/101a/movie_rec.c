@@ -122,23 +122,26 @@ static int __attribute__((used,noinline)) spy_take_sem_short(int sem, int timeou
 // Invalidates CPU cache for the frame data (JPCORE DMA bypasses cache).
 //
 // Data delivery uses seqlock protocol in shared memory (proven working at
-// 22fps in v26g).  DryOS kernel signaling (semaphores, message queues) is
-// NOT viable — causes context switches that starve the recording pipeline.
+// 28.2fps in v32d, 60s stable, 100% decode).  DryOS kernel signaling
+// (semaphores, message queues) is NOT viable — causes context switches
+// that starve the recording pipeline.
 //
 // Shared memory layout at 0x000FF000:
 //   [0]  magic      = 0x52455753 when active (set by webcam.c)
 //   [1]  slot_a_ptr = frame data pointer (dual-slot seqlock, slot A)
-//   [2]  slot_a_sz  = frame data size (slot A)
+//   [2]  slot_a_sz  = frame data size (AVCC-parsed, slot A)
 //   [3]  slot_a_seq = sequence counter (odd=writing, even=stable, slot A)
-//   [4]  slot_b_ptr = frame data pointer (dual-slot seqlock, slot B)
-//   [5]  slot_b_sz  = frame data size (slot B)
-//   [6]  slot_b_seq = sequence counter (odd=writing, even=stable, slot B)
+//   [4]  slot_b_ptr = frame data pointer (slot B)
+//   [5]  slot_b_sz  = frame data size (AVCC-parsed, slot B)
+//   [6]  slot_b_seq = sequence counter (slot B)
 //   [12] dbg_wr     = debug queue write index
 //   [13] dbg_rd     = debug queue read index
 //
-// Producer alternates: frame 1→A, frame 2→B, frame 3→A, ...
-// This doubles the buffer so two frames arriving during one bridge
-// PTP round-trip go to different slots — neither is lost.
+// NOTE: hdr[7..9] MUST NOT be written — causes hardware interference
+// (dark display, lens motor noise). Proven in v32f triple-slot tests.
+//
+// Producer cycles: frame 1→A, frame 2→B, frame 3→A, ...
+// Consumer collects all unseen frames and packs into one PTP response.
 
 static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, unsigned int size)
 {
@@ -209,8 +212,8 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
                 }
             }
 
-            // Triple-slot seqlock: cycle A (hdr[1..3]), B (hdr[4..6]), C (hdr[7..9]).
-            // Branchless: compute base index from slot counter.
+            // Dual-slot seqlock at hdr[1..6] (proven stable: v32d, 60s, 100%).
+            // A=hdr[1..3], B=hdr[4..6]. Branchless pointer arithmetic.
             {
                 static int slot = 0;
                 volatile unsigned int *s = hdr + 1 + slot * 3;
@@ -219,7 +222,7 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
                 s[1] = actual;
                 s[2]++;
                 slot++;
-                if (slot >= 3) slot = 0;
+                if (slot >= 2) slot = 0;
             }
         }
     }

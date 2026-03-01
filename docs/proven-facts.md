@@ -236,8 +236,9 @@ sub_FF85D98C_my (msg 6 handler)
     ▼
 spy_ring_write
     │ invalidates CPU cache for frame data (JPCORE DMA bypasses cache)
-    │ stores {ptr, size} via triple-slot seqlock at 0xFF000
-    │ (cycles hdr[1..3] / hdr[4..6] / hdr[7..9] per frame)
+    │ AVCC-parses frame to get exact H.264 size (not 256KB chunk)
+    │ stores {ptr, actual_size} via dual-slot seqlock at 0xFF000
+    │ (alternates hdr[1..3] / hdr[4..6] — hdr[7..9] MUST NOT be written)
     │ clears +0x80 (is_open) at 0x89E8 → prevents SD file writes
     ▼
 JPCORE encode pipeline (runs unmodified)
@@ -250,8 +251,10 @@ task_MovWrite (0xFF92F1EC)
     │ still updates consumed pointer (+0x18) → pipeline keeps flowing
     ▼
 webcam.c (CHDK module)
-    │ polls triple-slot seqlock (100 × msleep(10)), collects ALL unseen frames
-    │ packs 1-3 frames into PTP response (H264 or H264_MULTI format)
+    │ polls dual-slot seqlock (100 × msleep(10))
+    │ peeks AVCC headers from camera RAM to determine exact frame size
+    │ memcpy only exact frame bytes (not full buffer)
+    │ returns single frame (H264) or multi-frame batch (H264_MULTI)
     ▼
 PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 ```
@@ -302,6 +305,35 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 - msleep(5): 94.3% decode, 1219 received, 19.1fps (starved producer — only 1280 frames produced)
 - msleep(1): 98.5% decode, 1713 received, 28.1fps (25 decode failures from timing contention)
 **Implication**: msleep(10) is the minimum sleep that gives movie_record_task enough CPU for full 30fps production. Lower values starve the producer or cause seqlock read contention. Higher values miss more frames. The ~3.5% capture loss (61 frames/min) is inherent to the USB PTP round-trip (~35ms) and cannot be improved by polling faster.
+
+### 22. hdr[7..9] MUST NOT be written — causes hardware interference
+
+**Evidence**: Multiple approaches tested in v32f session 2:
+- Every-frame write to hdr[7..9] (triple-slot seqlock): dark display, IS motor clicking, garbage data
+- Write-once hdr[7] (BSS address publish): same dark display, IS motor clicking
+- BSS `static unsigned int slot_data[9]` + hdr[7] pointer: camera crashes at 0s
+
+**Implication**: spy buffer offsets 7-9 at 0xFF000 overlap with something hardware-sensitive. Only hdr[1..6] (dual-slot) is safe for seqlock data. All triple-slot approaches have been exhausted and failed.
+
+### 23. Yield msleep(10) after detecting new frame is mandatory
+
+**Evidence**: Removing yield msleep between frame detection and memcpy read:
+- Frame sizes drop from ~40KB to 2-9KB (corrupt/partial data)
+- Decode rate drops from 87.6% to 48.8%
+- FPS drops from 17.6 to 2.6
+- USB crash at 8.3s
+
+With yield restored: stable operation, correct frame sizes.
+
+**Cause**: DryOS cooperative multitasking. Without msleep(), the PTP task monopolizes CPU during memcpy + AVCC parse, starving movie_record_task and all ISP/display/IS motor tasks. Both msleep calls in the poll loop are essential: one for waiting (no new data), one for yielding (before reading).
+
+### 24. Consumer must peek AVCC headers before memcpy (minimum copy)
+
+**Evidence**: Producer writes AVCC-parsed actual size to seqlock s[1], but on AVCC parse failure it falls back to raw chunk size (up to 256KB, clamped to 64KB by SPY_BUF_SIZE). Consumer should not trust s[1] blindly.
+
+**Optimization**: Read AVCC length headers directly from camera RAM (src[0..3], ~20 bytes of header reads), compute exact frame size, then memcpy only that amount. Reduces worst-case copy from 64KB to actual frame size (typically 9-45KB). Less CPU time = more time for ISP/display/IS motor tasks.
+
+**Implementation**: Both single-frame and multi-frame paths peek AVCC from `src` (camera RAM pointer) before any memcpy. Multi-frame path copies directly to multi_frame_buf, skipping intermediate frame_data_buf.
 
 ## What Needs to Happen Next
 

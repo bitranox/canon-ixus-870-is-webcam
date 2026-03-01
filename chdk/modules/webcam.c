@@ -59,7 +59,7 @@ static unsigned char *frame_data_buf = NULL;
 
 // Multi-frame packing buffer (batch transfer: pack 2-3 frames per PTP response)
 static unsigned char *multi_frame_buf = NULL;
-#define MULTI_BUF_SIZE (128 * 1024)        // 128 KB — holds 2 P-frames or 1 IDR+1 P-frame
+static unsigned int multi_buf_size = 0;    // actual allocated size
 
 // IDR injection: the first H.264 frame (IDR) is lost due to a race condition
 // (spy_ring_write fires before PTP polling starts). The IDR data persists at
@@ -81,22 +81,23 @@ static int idr_injected = 0;
 // ============================================================
 #define WEBCAM_SPY_ADDR    ((volatile unsigned int *)0x000FF000)
 // spy[0]  = magic      (0x52455753 = active, set by webcam.c)
-// spy[1]  = slot_a_ptr (frame data pointer, triple-slot seqlock, slot A)
-// spy[2]  = slot_a_sz  (frame data size, slot A)
+// spy[1]  = slot_a_ptr (frame data pointer, dual-slot seqlock, slot A)
+// spy[2]  = slot_a_sz  (frame data size, AVCC-parsed, slot A)
 // spy[3]  = slot_a_seq (sequence counter: odd=writing, even=stable, slot A)
 // spy[4]  = slot_b_ptr (slot B)
 // spy[5]  = slot_b_sz  (slot B)
 // spy[6]  = slot_b_seq (slot B)
-// spy[7]  = slot_c_ptr (slot C)
-// spy[8]  = slot_c_sz  (slot C)
-// spy[9]  = slot_c_seq (slot C)
 // spy[12] = dbg_wr     (debug queue write index)
 // spy[13] = dbg_rd     (debug queue read index)
+//
+// Dual-slot seqlock (proven stable: v32d, 60s, 100% decode, 28.2fps).
+// Consumer collects all unseen frames, sorts oldest-first, packs into
+// multi_frame_buf for batch PTP response. Single-frame fallback if
+// multi_frame_buf allocation failed.
 
-// Triple-slot seqlock tracking (module-level for persistence across capture calls)
+// Dual-slot seqlock tracking (module-level for persistence across capture calls)
 static unsigned int last_seq_a = 0;    // last seen slot A sequence
 static unsigned int last_seq_b = 0;    // last seen slot B sequence
-static unsigned int last_seq_c = 0;    // last seen slot C sequence
 
 // ============================================================
 // H.264 frame capture from recording spy buffer
@@ -259,86 +260,68 @@ static int capture_frame_h264(void)
         }
     }
 
-    // Triple-slot seqlock polling with multi-frame batching.
-    // Collect ALL unseen frames, sort oldest-first, AVCC-parse each,
-    // pack into multi_frame_buf for single PTP response.
+    // Dual-slot seqlock polling with multi-frame batching.
+    // Slots A=hdr[1..3], B=hdr[4..6] (proven stable at hdr[1..6]).
+    // Collect all unseen frames, sort oldest-first by seq, pack into
+    // multi_frame_buf for single PTP response. Falls back to single-frame
+    // (newest unseen) if multi_frame_buf allocation failed.
     {
         int polls;
 
         for (polls = 0; polls < 100; polls++) {
             unsigned int seq_a = hdr[3];
             unsigned int seq_b = hdr[6];
-            unsigned int seq_c = hdr[9];
             int new_a = !(seq_a & 1) && seq_a != last_seq_a && seq_a != 0;
             int new_b = !(seq_b & 1) && seq_b != last_seq_b && seq_b != 0;
-            int new_c = !(seq_c & 1) && seq_c != last_seq_c && seq_c != 0;
 
-            if (!new_a && !new_b && !new_c) {
+            if (!new_a && !new_b) {
                 msleep(10);
                 continue;
             }
 
-            // Yield CPU so movie_record_task stays scheduled.
-            msleep(1);
+            /* Yield CPU so movie_record_task and ISP tasks stay scheduled.
+             * Without this, the PTP task starves DryOS cooperative tasks,
+             * causing dark display and IS motor clicking. */
+            msleep(10);
 
-            // Collect unseen slots, sorted by seq ascending (oldest first)
-            // Use simple inline sort for <= 3 elements
-            {
-                struct { unsigned int seq; int idx; } pending[3];
-                int npending = 0;
+            if (multi_frame_buf && new_a && new_b) {
+                /* Both slots have new data — pack oldest-first. */
+                struct { unsigned int seq; int idx; } pending[2];
                 int nframes = 0;
-                unsigned int out_pos = 2;  // skip u16 count header
+                unsigned int out_pos = 2;  /* skip u16 count header */
                 int i;
 
-                if (new_a) { pending[npending].seq = seq_a; pending[npending].idx = 0; npending++; }
-                if (new_b) { pending[npending].seq = seq_b; pending[npending].idx = 1; npending++; }
-                if (new_c) { pending[npending].seq = seq_c; pending[npending].idx = 2; npending++; }
-
-                // Sort ascending by seq (bubble, max 3 elements)
-                if (npending >= 2 && pending[1].seq < pending[0].seq) {
-                    unsigned int ts = pending[0].seq; int ti = pending[0].idx;
-                    pending[0].seq = pending[1].seq; pending[0].idx = pending[1].idx;
-                    pending[1].seq = ts; pending[1].idx = ti;
-                }
-                if (npending == 3) {
-                    if (pending[2].seq < pending[1].seq) {
-                        unsigned int ts = pending[1].seq; int ti = pending[1].idx;
-                        pending[1].seq = pending[2].seq; pending[1].idx = pending[2].idx;
-                        pending[2].seq = ts; pending[2].idx = ti;
-                    }
-                    if (pending[1].seq < pending[0].seq) {
-                        unsigned int ts = pending[0].seq; int ti = pending[0].idx;
-                        pending[0].seq = pending[1].seq; pending[0].idx = pending[1].idx;
-                        pending[1].seq = ts; pending[1].idx = ti;
-                    }
+                if (seq_a < seq_b) {
+                    pending[0].seq = seq_a; pending[0].idx = 0;
+                    pending[1].seq = seq_b; pending[1].idx = 1;
+                } else {
+                    pending[0].seq = seq_b; pending[0].idx = 1;
+                    pending[1].seq = seq_a; pending[1].idx = 0;
                 }
 
-                for (i = 0; i < npending; i++) {
+                for (i = 0; i < 2; i++) {
                     volatile unsigned int *s = hdr + 1 + pending[i].idx * 3;
                     unsigned char *src = (unsigned char *)s[0];
                     unsigned int sz = s[1];
+                    unsigned int total;
 
-                    if (!src || sz == 0) goto mark_seen;
-                    if (sz > SPY_BUF_SIZE) sz = SPY_BUF_SIZE;
+                    if (!src || sz == 0 || sz > SPY_BUF_SIZE) goto mark_seen;
 
-                    memcpy(frame_data_buf, src, sz);
-                    if (s[2] != pending[i].seq) goto mark_seen;  // torn write
-
-                    // AVCC parse to get actual frame size
+                    /* Peek AVCC headers from camera RAM to get exact size */
                     {
-                        unsigned char *p = frame_data_buf;
-                        unsigned int pos = 0, total = 0;
+                        unsigned int pos = 0;
                         int nal_count = 0, have_vcl = 0;
+                        total = 0;
 
                         while (pos + 5 <= sz && nal_count < 8) {
-                            unsigned int nal_len = ((unsigned int)p[pos] << 24) |
-                                                  ((unsigned int)p[pos+1] << 16) |
-                                                  ((unsigned int)p[pos+2] << 8) |
-                                                  (unsigned int)p[pos+3];
+                            unsigned int nal_len = ((unsigned int)src[pos] << 24) |
+                                                  ((unsigned int)src[pos+1] << 16) |
+                                                  ((unsigned int)src[pos+2] << 8) |
+                                                  (unsigned int)src[pos+3];
                             unsigned int nal_type;
                             if (nal_len < 2 || nal_len > 120000) break;
-                            nal_type = p[pos + 4] & 0x1F;
-                            if (p[pos + 4] & 0x80) break;
+                            nal_type = src[pos + 4] & 0x1F;
+                            if (src[pos + 4] & 0x80) break;
                             total = pos + 4 + nal_len;
                             pos = total;
                             nal_count++;
@@ -346,30 +329,29 @@ static int capture_frame_h264(void)
                         }
 
                         if (!have_vcl || total == 0 || total > sz) goto mark_seen;
+                    }
 
-                        // Check if frame fits in multi_frame_buf
-                        if (multi_frame_buf && out_pos + 4 + total <= MULTI_BUF_SIZE) {
-                            // Pack: [u32 LE size][frame data]
-                            multi_frame_buf[out_pos]   = total & 0xFF;
-                            multi_frame_buf[out_pos+1] = (total >> 8) & 0xFF;
-                            multi_frame_buf[out_pos+2] = (total >> 16) & 0xFF;
-                            multi_frame_buf[out_pos+3] = (total >> 24) & 0xFF;
-                            memcpy(multi_frame_buf + out_pos + 4, frame_data_buf, total);
-                            out_pos += 4 + total;
-                            nframes++;
-                        }
+                    /* Copy only the exact frame bytes, then verify seqlock */
+                    if (out_pos + 4 + total <= multi_buf_size) {
+                        multi_frame_buf[out_pos]   = total & 0xFF;
+                        multi_frame_buf[out_pos+1] = (total >> 8) & 0xFF;
+                        multi_frame_buf[out_pos+2] = (total >> 16) & 0xFF;
+                        multi_frame_buf[out_pos+3] = (total >> 24) & 0xFF;
+                        memcpy(multi_frame_buf + out_pos + 4, src, total);
+                        if (s[2] != pending[i].seq) goto mark_seen;  /* torn write */
+                        out_pos += 4 + total;
+                        nframes++;
                     }
 
                     mark_seen:
                     if (pending[i].idx == 0) last_seq_a = pending[i].seq;
-                    else if (pending[i].idx == 1) last_seq_b = pending[i].seq;
-                    else last_seq_c = pending[i].seq;
+                    else last_seq_b = pending[i].seq;
                 }
 
                 if (nframes == 0) return 0;
 
-                if (nframes == 1 || !multi_frame_buf) {
-                    // Single frame: data is in multi_frame_buf at offset 6 (2-byte count + 4-byte size)
+                if (nframes == 1) {
+                    /* Single frame packed: return as H264 (skip count+size header) */
                     hw_jpeg_data = multi_frame_buf + 6;
                     hw_jpeg_size = out_pos - 6;
                     frame_width = 640;
@@ -378,7 +360,7 @@ static int capture_frame_h264(void)
                     return (int)(out_pos - 6);
                 }
 
-                // Multiple frames: write count header and return as H264_MULTI
+                /* Two frames: write count header, return as H264_MULTI */
                 multi_frame_buf[0] = nframes & 0xFF;
                 multi_frame_buf[1] = (nframes >> 8) & 0xFF;
                 hw_jpeg_data = multi_frame_buf;
@@ -387,6 +369,66 @@ static int capture_frame_h264(void)
                 frame_height = 480;
                 frame_format = WEBCAM_FMT_H264_MULTI;
                 return (int)out_pos;
+            } else {
+                /* Single new slot, or no multi_frame_buf: return newest unseen.
+                 * Peek AVCC headers directly from camera RAM to determine exact
+                 * frame size BEFORE memcpy — copy only what's needed. */
+                volatile unsigned int *s;
+                unsigned int best_seq = 0;
+                int best_idx = -1;
+                unsigned char *src;
+                unsigned int sz, copy_sz;
+
+                if (new_a && seq_a > best_seq) { best_seq = seq_a; best_idx = 0; }
+                if (new_b && seq_b > best_seq) { best_seq = seq_b; best_idx = 1; }
+
+                if (best_idx < 0) continue;
+
+                /* Mark both as seen */
+                if (new_a) last_seq_a = seq_a;
+                if (new_b) last_seq_b = seq_b;
+
+                s = hdr + 1 + best_idx * 3;
+                src = (unsigned char *)s[0];
+                sz = s[1];
+
+                if (!src || sz == 0) return 0;
+                if (sz > SPY_BUF_SIZE) sz = SPY_BUF_SIZE;
+
+                /* Peek AVCC length headers from camera RAM to compute exact
+                 * copy size.  Walk NALs: [4-byte BE len][NAL data]... */
+                {
+                    unsigned int pos = 0, total = 0;
+                    int nal_count = 0, have_vcl = 0;
+
+                    while (pos + 5 <= sz && nal_count < 8) {
+                        unsigned int nal_len = ((unsigned int)src[pos] << 24) |
+                                              ((unsigned int)src[pos+1] << 16) |
+                                              ((unsigned int)src[pos+2] << 8) |
+                                              (unsigned int)src[pos+3];
+                        unsigned int nal_type;
+                        if (nal_len < 2 || nal_len > 120000) break;
+                        nal_type = src[pos + 4] & 0x1F;
+                        if (src[pos + 4] & 0x80) break;
+                        total = pos + 4 + nal_len;
+                        pos = total;
+                        nal_count++;
+                        if (nal_type == 1 || nal_type == 5) { have_vcl = 1; break; }
+                    }
+
+                    if (!have_vcl || total == 0 || total > sz) return 0;
+                    copy_sz = total;
+                }
+
+                memcpy(frame_data_buf, src, copy_sz);
+                if (s[2] != best_seq) return 0;  /* torn write */
+
+                hw_jpeg_data = frame_data_buf;
+                hw_jpeg_size = copy_sz;
+                frame_width = 640;
+                frame_height = 480;
+                frame_format = WEBCAM_FMT_H264;
+                return (int)copy_sz;
             }
         }
 
@@ -500,8 +542,17 @@ static int webcam_start(int jpeg_quality)
     }
 
     // Allocate multi-frame packing buffer (batch transfer).
+    // Try progressively smaller sizes — DryOS heap may be fragmented.
     if (!multi_frame_buf) {
-        multi_frame_buf = malloc(MULTI_BUF_SIZE);
+        unsigned int try_sizes[] = { 128*1024, 96*1024, 64*1024, 48*1024 };
+        int ti;
+        for (ti = 0; ti < 4; ti++) {
+            multi_frame_buf = malloc(try_sizes[ti]);
+            if (multi_frame_buf) {
+                multi_buf_size = try_sizes[ti];
+                break;
+            }
+        }
     }
 
     // Initialize shared spy buffer header (must be done BEFORE starting
@@ -510,13 +561,13 @@ static int webcam_start(int jpeg_quality)
         volatile unsigned int *spy = WEBCAM_SPY_ADDR;
         int si;
         for (si = 0; si < 16; si++) spy[si] = 0;
+
         spy[0] = 0x52455753;                          // Magic (enable LAST)
     }
 
     // Reset seqlock tracking for new session
     last_seq_a = 0;
     last_seq_b = 0;
-    last_seq_c = 0;
 
     // Start video recording via the firmware's CtrlSrv event system.
     // UIFS_StartMovieRecord posts event 0x9A1 — CtrlSrv processes it
@@ -586,8 +637,8 @@ static int webcam_stop(void)
     if (multi_frame_buf) {
         free(multi_frame_buf);
         multi_frame_buf = NULL;
+        multi_buf_size = 0;
     }
-
     frame_count = 0;
     current_fps = 0;
 

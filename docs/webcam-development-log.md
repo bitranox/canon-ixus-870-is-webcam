@@ -3001,3 +3001,69 @@ The decode failures need investigation. Possible causes:
 - Frame data corruption during multi-slot memcpy
 
 A 60-second test would reveal whether the decode failures are transient (startup) or persistent.
+
+## v32f Session 2 — Triple-Slot Attempts, Starvation Discovery, AVCC Peek (2026-03-01)
+
+### Triple-Slot BSS Approach (FAILED)
+
+Attempted to move all 3 seqlock slots into BSS (`static unsigned int slot_data[9]` in movie_rec.c) to avoid writing to hdr[7..9] which causes hardware interference. Producer published the BSS address via hdr[7] once (write-once pattern). Consumer read hdr[7] to find slot_data.
+
+**Result**: Camera crashed immediately at startup (0 seconds). Reproduced twice with battery pulls. BSS approach abandoned entirely.
+
+### hdr[7..9] Hardware Interference (CONFIRMED)
+
+Multiple approaches tried to use hdr[7..9] for a third seqlock slot:
+- Every-frame write to hdr[7..9]: dark display, IS motor clicking, garbage NALT values
+- Write-once hdr[7] (just the BSS address pointer): same dark display, clicking motor
+- BSS slot_data + hdr[7] address publish: crash at 0s
+
+**Conclusion**: hdr[7..9] (spy buffer offsets 7-9) MUST NOT be written by the producer. Something at those addresses interacts with camera hardware (ISP, display, or IS motor control). Only hdr[1..6] is safe for seqlock data.
+
+### Revert to Dual-Slot + Multi-Frame Packing
+
+Reverted movie_rec.c to proven v32d dual-slot producer at hdr[1..6]. Kept multi-frame packing in webcam.c consumer (packs both slots when `new_a && new_b`, otherwise returns newest single frame). Added cascade malloc for multi_frame_buf (128K→96K→64K→48K).
+
+**Test result (with yield msleep)**: 201 received, 176 decoded (87.6%), 17.6fps over 10s. Stable, no crashes. But multi-frame batching rarely triggers — `new_a && new_b` condition too restrictive with dual-slot.
+
+### Yield msleep(10) Is Critical (CONFIRMED)
+
+Removed the yield `msleep(10)` between detecting a new frame and reading it. Hypothesis: seqlock guarantees frame is complete when seq is even, so yield is unnecessary.
+
+**Result**: Catastrophic regression.
+
+| Metric | With yield | Without yield |
+|--------|-----------|---------------|
+| Frames received | 201 | 41 |
+| Decoded | 176 (87.6%) | 20 (48.8%) |
+| Decoded FPS | 17.6 | 2.6 |
+| Avg frame size | ~40 KB | 6.7 KB |
+| USB stability | Full 10s | Crash at 8.3s |
+
+Frame sizes dropped to 2-9KB (vs normal 37-50KB), indicating corrupt/partial data despite seqlock validation passing. USB I/O errors started at 8.3s.
+
+**Root cause**: DryOS cooperative multitasking. Without msleep(), the PTP task monopolizes the CPU during memcpy + AVCC parse, starving movie_record_task (which produces frames) and ISP/display/IS motor tasks. The seqlock guarantees data consistency at the point of read, but the producer needs CPU time to PRODUCE the next frame.
+
+### Dark Screen + Clicking Motor Persists
+
+After restoring yield msleep(10), tested again: 129 decoded (76.3%), 19.8fps over 6.5s, USB crash at ~6.5s. Camera showed dark display and IS motor clicking.
+
+Compared to v32d baseline (same dual-slot producer, no multi_frame_buf): 100% decode, 28.2fps, 60s stability, NO dark screen. The difference is the **128KB multi_frame_buf heap allocation**. Theory: DryOS heap exhaustion starves ISP/display/IS subsystems of memory.
+
+### AVCC Peek Optimization
+
+Changed consumer to peek AVCC length headers directly from camera RAM (`src[pos]`) BEFORE memcpy, computing exact frame size. Then `memcpy(frame_data_buf, src, copy_sz)` copies only the exact H.264 frame bytes.
+
+**Before**: `memcpy(frame_data_buf, src, sz)` where `sz` = producer's reported size (usually correct but up to 64KB on AVCC parse failure), then AVCC parse on the copy.
+
+**After**: AVCC parse on camera RAM in-place (reads only ~20 bytes of headers), then memcpy of exact frame size only (typically 9-45KB).
+
+Multi-frame path also optimized: copies directly from camera RAM to multi_frame_buf, skipping the intermediate frame_data_buf copy.
+
+### Key Lessons
+
+1. **hdr[7..9] is off-limits** — causes hardware interference regardless of write pattern
+2. **BSS + hdr[7] address publish crashes** — cannot use BSS for triple-slot
+3. **Only dual-slot at hdr[1..6] is stable** — all triple-slot approaches have failed
+4. **Yield msleep(10) is mandatory** — not just for producer scheduling, but for ALL DryOS tasks (ISP, display, IS motor)
+5. **AVCC peek before memcpy** — read NAL headers from camera RAM in-place, copy only exact frame bytes
+6. **128KB multi_frame_buf may cause heap starvation** — dark screen appeared with it, never without it (needs confirmation)
