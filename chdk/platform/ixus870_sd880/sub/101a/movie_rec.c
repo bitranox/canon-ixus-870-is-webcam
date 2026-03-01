@@ -130,6 +130,9 @@ static int __attribute__((used,noinline)) spy_take_sem_short(int sem, int timeou
 //   [1]  ptr      = frame data pointer (set by writer, seqlock)
 //   [2]  size     = frame data size (set by writer, seqlock)
 //   [3]  seq      = sequence counter (odd=writing, even=stable)
+//   [4]  idr_ptr  = IDR frame pointer (IDR-only seqlock, set by writer)
+//   [5]  idr_size = IDR frame size (IDR-only seqlock, set by writer)
+//   [6]  idr_seq  = IDR sequence counter (odd=writing, even=stable)
 //   [12] dbg_wr   = debug queue write index
 //   [13] dbg_rd   = debug queue read index
 
@@ -163,6 +166,15 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
         hdr[1] = (unsigned int)ptr;
         hdr[2] = size;
         hdr[3]++;
+
+        // IDR priority seqlock: store latest IDR in hdr[4..6] so P-frames
+        // cannot overwrite it. Updated only on IDR frames (~2.5/sec).
+        if (size >= 5 && (ptr[4] & 0x1F) == 5) {
+            hdr[6]++;
+            hdr[4] = (unsigned int)ptr;
+            hdr[5] = size;
+            hdr[6]++;
+        }
     }
 }
 

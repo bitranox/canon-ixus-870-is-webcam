@@ -2634,3 +2634,38 @@ Reverted spy_take_sem_short to a simple passthrough — calls real TakeSemaphore
 - Each missed IDR causes ~10-12 consecutive decode failures until the next IDR arrives
 - The 1000ms timeout fix is confirmed stable for extended sessions
 - Remaining bottleneck is purely bridge-side: seqlock polling misses IDR frames
+
+## v32 — IDR Priority Seqlock (2026-03-01)
+
+### Hypothesis
+v31c degrades from 96.2% (10s) to 67.9% (20s). Suspected cause: P-frames overwriting IDR frames in the main seqlock (hdr[1..3]) before the bridge polls. Added a second seqlock at hdr[4..6] updated ONLY on IDR frames (~2.5/sec), never touched by P-frames.
+
+### Changes
+- **movie_rec.c**: After main seqlock write, check NAL type. If IDR (type 5), write ptr/size to hdr[4..6] via separate seqlock.
+- **webcam.c**: Check IDR seqlock first in capture_frame_h264. If a new IDR is available, copy it and skip stale P-frames. Module-level `last_seq`/`last_idr_seq` statics, reset in webcam_start.
+
+### 20s Test Results
+```
+=== SESSION SUMMARY ===
+  Received: 313 frames
+  Decoded FPS: 15.6
+  Total FPS (incl. drops): 27.6
+  Camera produced: ~460 frames
+  Duration: 20.0 seconds
+=== DEBUG SUMMARY ===
+  Decode: 439 attempts, 313 OK (71.3%), 126 FAIL
+  Decode errors: "Decoder needs more data": 126
+  NAL types: IDR: 25, P-frame: 414
+  AVCC valid: 439/439 (100.0%)
+  Max streak: 62 (cam#52-cam#115)
+  IDR reinjects: 2
+  USB errors: send=0 recv=0 timeout=0 io=0
+```
+
+### Analysis — Original Hypothesis Was Wrong
+- **71.3% decode** — marginal improvement over v31c's 67.9%
+- **Still 25 IDRs** — identical to v31c. The IDR priority seqlock recovered 0 additional IDRs.
+- **P-frames are NOT overwriting IDRs in the seqlock.** Both tests see exactly 25 IDRs in 20s. The camera produces ~1.25 IDRs/sec consistently.
+- **Actual cause of decode failures**: 21 frames missed entirely (460 produced, 439 received). When a P-frame in a decode chain is skipped, all subsequent P-frames fail until the next IDR. 126 failures / ~17 frames per IDR interval ≈ 7-8 broken chains.
+- **The seqlock is not the bottleneck** — it delivers 439/460 frames (95.4%). The decode failures come from the ~5% of P-frames that are skipped, breaking the H.264 reference chain.
+- The real fix needs to either: (a) reduce frame skipping to near-zero, or (b) increase IDR frequency so chains break less, or (c) make the bridge request IDR re-delivery when decode fails.

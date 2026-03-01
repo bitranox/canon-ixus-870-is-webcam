@@ -266,7 +266,7 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 | Average bitrate | ~8 Mbps | v31c bridge output |
 | SD card writes | 0 bytes | 0-byte MOV file, SD usage unchanged |
 | Max decode streak | 210 frames (cam#2-cam#219) | v31c: ~8.4s unbroken decode |
-| Frame loss source | Seqlock overwrites → missed IDRs → decode failures | 9 decode failures clustered after one missed IDR at ~9s |
+| Frame loss source | Skipped P-frames break decode chain until next IDR | v32: 439/460 received (95.4%), but 21 skipped frames cause 126 decode failures |
 
 ### 17. Original TakeSemaphore timeout (1000ms) is correct for webcam
 
@@ -274,7 +274,12 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 **Mechanism**: JPCORE hardware encode completes in ~1-5ms. The 1000ms timeout never fires during normal operation. The 50ms timeout occasionally fired when JPCORE was slow (e.g. IDR frames), returning fake success while [SP,#0x38] was still non-zero. Even with error path bypass, the corrupted JPCORE state caused pipeline instability.
 **Implication**: spy_take_sem_short is now a simple passthrough. The error path bypass (proven fact #16) remains as a safety net but should rarely fire with 1000ms timeout.
 
+### 18. IDR frames are NOT lost to seqlock overwrites
+
+**Evidence**: v32 added a second seqlock (hdr[4..6]) updated only on IDR frames. Result: still 25 IDRs in 20s — identical to v31c without the IDR seqlock. Zero additional IDRs recovered.
+**Implication**: The original hypothesis (P-frames overwriting IDRs before bridge polls) was wrong. The camera produces ~1.25 IDRs/sec in 20s tests. All produced IDRs reach the bridge. Decode failures come from skipped P-frames (21/460 = 4.6% frame loss) breaking the H.264 reference chain — each skip causes ~17 consecutive decode failures until the next IDR.
+
 ## What Needs to Happen Next
 
-1. **Reduce decode failures from missed IDRs**: The 3.8% decode loss comes from seqlock overwrites that skip IDR frames. When the bridge misses an IDR, all P-frames until the next IDR fail to decode. Options: increase IDR frequency on camera, or add bridge-side IDR re-injection for these gaps.
+1. **Reduce P-frame skipping**: 4.6% frame loss causes 28.7% decode failure due to chain breaks. Options: (a) reduce PTP poll latency, (b) increase camera IDR frequency (shorter GOP → smaller damage per skip), (c) bridge-side error recovery requesting IDR re-send.
 2. **Virtual webcam integration**: Connect the H.264 decode output to a DirectShow virtual webcam filter for use in video conferencing apps.
