@@ -3316,3 +3316,43 @@ chdk-webcam.exe --debug --timeout 10 --no-webcam
 ```
 
 **Result: Preview window showed live 640x480→1280x720 video from the camera at 29.9 FPS. 100% decode, 0 drops, full 10 seconds.** User confirmed live video visible in the GDI window.
+
+## v33b — softcam Virtual Webcam + Deblocking Quality Fix (2026-03-04)
+
+### Goal
+
+1. Build and integrate softcam (tshino/softcam v1.8.1) for DirectShow virtual webcam
+2. Fix motion artifacts caused by disabled deblocking filter
+
+### Changes
+
+1. **softcam integration**: Built softcam from source (VS 2022 Build Tools), installed header/lib to vcpkg paths, added cmake detection in CMakeLists.txt. `virtual_webcam.cpp` detects softcam via `__has_include(<softcam/softcam.h>)`. DLL registered via `regsvr32`.
+2. **softcam framerate=0**: Changed `scCreateCamera` to use framerate 0 (immediate delivery) instead of 30. Camera is the real-time source — softcam should not sleep internally to pace output.
+3. **H.264 deblocking filter enabled**: Removed `skip_loop_filter = AVDISCARD_ALL` and `AV_CODEC_FLAG2_FAST` from h264_decoder.cpp. These caused visible block artifacts during motion. 640x480 decode with full quality is trivial on modern PC.
+
+### Test — 10 minutes with preview + virtual webcam
+
+```
+=== SESSION SUMMARY ===
+  Received: 17761 frames
+  Dropped:  111 (decode failures)
+  Skipped:  0 (camera-produced but never received)
+  Unique data: 17872 frames
+  Last cam frame#: 18111
+  Duration: 600.0 seconds
+  Decoded FPS: 29.6
+  Camera produced: ~18111 frames
+=======================
+
+=== DEBUG SUMMARY ===
+  Decode:       17872 attempts, 17761 OK (99.4%), 111 FAIL
+  Decode errors: "Decoder needs more data": 111
+  AVCC valid:   17872/17872 (100.0%)
+  Max streak:   4960 (cam#4594-cam#9643)
+  PTP RTT:      min=3.2ms avg=25.7ms max=133.0ms
+  USB errors:   send=0 recv=0 timeout=0 io=0
+  Frame sizes:  min=21544 max=73284 avg=40434
+=====================
+```
+
+**Result: 10 minutes stable, 29.6 FPS, 0 USB errors, 99.4% decode.** Preview + virtual webcam both active. Motion artifacts greatly reduced by enabling deblocking filter. Minor residual artifacts on very fast scene changes (inherent to H.264 compression at camera's bitrate — not fixable bridge-side).

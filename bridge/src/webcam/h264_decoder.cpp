@@ -51,10 +51,8 @@ bool H264Decoder::init(int output_width, int output_height) {
         return false;
     }
 
-    // Allow partial/corrupt frames, skip loop filter for speed
+    // Low-delay decoding with full quality (deblocking filter enabled)
     impl_->ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
-    impl_->ctx->flags2 |= AV_CODEC_FLAG2_FAST;
-    impl_->ctx->skip_loop_filter = AVDISCARD_ALL;
     impl_->ctx->thread_count = 1;  // single-threaded for low latency
 
     // Canon IXUS 870 IS H.264 SPS+PPS (640x480 Baseline Level 3.1)

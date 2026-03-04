@@ -41,6 +41,10 @@ find_library(AVUTIL_LIBRARY NAMES avutil)
 find_path(SWSCALE_INCLUDE_DIR NAMES libswscale/swscale.h)
 find_library(SWSCALE_LIBRARY NAMES swscale)
 
+# softcam (virtual webcam DirectShow filter)
+find_path(SOFTCAM_INCLUDE_DIR NAMES softcam/softcam.h)
+find_library(SOFTCAM_LIBRARY NAMES softcam)
+
 # Sources
 set(PTP_SOURCES
     src/ptp/ptp_client.cpp
@@ -106,6 +110,15 @@ if(AVCODEC_LIBRARY AND AVUTIL_LIBRARY AND SWSCALE_LIBRARY)
     message(STATUS "FFmpeg found — H.264 decoding enabled")
 else()
     message(WARNING "FFmpeg not found — H.264 decoding disabled")
+endif()
+
+# softcam virtual webcam
+if(SOFTCAM_LIBRARY AND SOFTCAM_INCLUDE_DIR)
+    target_include_directories(chdk-webcam PRIVATE ${SOFTCAM_INCLUDE_DIR})
+    target_link_libraries(chdk-webcam PRIVATE ${SOFTCAM_LIBRARY})
+    message(STATUS "softcam found — virtual webcam enabled")
+else()
+    message(STATUS "softcam not found — virtual webcam will use shared memory fallback")
 endif()
 
 # Windows-specific

@@ -59,8 +59,9 @@ bool VirtualWebcam::init(const VirtualWebcamConfig& config) {
     impl_->config = config;
 
 #if HAS_SOFTCAM
-    impl_->camera = scCreateCamera(config.width, config.height,
-                                    static_cast<float>(config.fps));
+    // Use framerate=0 for immediate delivery — camera is our real-time source,
+    // so scSendFrame should not sleep to pace output.
+    impl_->camera = scCreateCamera(config.width, config.height, 0.0f);
     if (!impl_->camera) {
         impl_->last_error = "Failed to create softcam camera";
         return false;
