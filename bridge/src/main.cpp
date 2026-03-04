@@ -795,6 +795,15 @@ int main(int argc, char* argv[]) {
                             avcc.nal_name, avcc.valid ? "OK" : avcc.problem,
                             decode_streak);
                 }
+
+                // Send decoded multi-frame to preview/webcam
+                if (vwebcam.is_active()) {
+                    vwebcam.send_frame(sub_rgb.data.data(), sub_rgb.width, sub_rgb.height, sub_rgb.stride);
+                }
+                if (preview.is_open()) {
+                    preview.show_frame(sub_rgb.data.data(), sub_rgb.width, sub_rgb.height, sub_rgb.stride);
+                }
+
                 frames_received++;
                 total_bytes += static_cast<int>(sub_frame.data.size());
                 if (!has_first_frame) { first_frame_time = std::chrono::steady_clock::now(); has_first_frame = true; }

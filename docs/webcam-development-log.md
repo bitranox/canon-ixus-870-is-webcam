@@ -3266,3 +3266,53 @@ DiUSB20HDMACHal provides simple single-buffer DMA: one address register, one siz
 ### Conclusion
 
 The current PTP bridge approach is the right solution for this hardware. The USB subsystem has exactly 3 data endpoints (all committed to PTP), no isochronous support, descriptors in ROM with no RAM copy, and no SoftConnect API for runtime reconfiguration. Native UVC would require extreme reverse engineering of Canon's undocumented custom USB core with no firmware reference implementation — far more complex than the working PTP bridge which already achieves theoretical maximum performance.
+
+## v33 — Preview Window + FFmpeg H.264 Decode (2026-03-04)
+
+### Goal
+
+Enable the bridge's preview window (GDI) and H.264 decoder (FFmpeg) so decoded frames are displayed live on the PC. Previously the bridge always ran with `--no-preview --no-webcam` during firmware development.
+
+### Changes
+
+1. **Bridge reconfigured with FFmpeg**: `cmake` now detects FFmpeg 8.0.1 from vcpkg, defines `HAS_FFMPEG`, links avcodec-62/avutil-60/swscale-9
+2. **Bug fix in main.cpp**: The multi-frame H.264 batch path (`FRAME_FMT_H264_MULTI`) decoded frames but never sent them to the preview window or virtual webcam — only collected stats. Added `preview.show_frame()` and `vwebcam.send_frame()` calls after successful decode in the multi-frame loop.
+
+### Test 1 — First run (USB stale state)
+
+```
+chdk-webcam.exe --debug --timeout 10 --no-webcam
+```
+
+- 59 frames decoded in ~2 seconds (100% decode, 29.5 FPS), then USB timeouts for remaining 8 seconds
+- Preview window opened but USB hang prevented sustained video
+- Likely stale USB state from previous session
+
+### Test 2 — Second run (clean)
+
+```
+chdk-webcam.exe --debug --timeout 10 --no-webcam
+```
+
+```
+=== SESSION SUMMARY ===
+  Received: 298 frames
+  Dropped:  0 (decode failures)
+  Skipped:  0 (camera-produced but never received)
+  Unique data: 298 frames
+  Last cam frame#: 300
+  Duration: 9.9 seconds
+  Decoded FPS: 29.9
+  Camera produced: ~300 frames
+=======================
+
+=== DEBUG SUMMARY ===
+  Decode:       298 OK (100.0%), 0 FAIL
+  AVCC valid:   298/298 (100.0%)
+  Max streak:   298
+  PTP RTT:      min=3.3ms avg=29.0ms max=130.6ms
+  Frame sizes:  min=36436 max=63984 avg=39350
+=====================
+```
+
+**Result: Preview window showed live 640x480→1280x720 video from the camera at 29.9 FPS. 100% decode, 0 drops, full 10 seconds.** User confirmed live video visible in the GDI window.
