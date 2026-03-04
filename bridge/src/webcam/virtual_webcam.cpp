@@ -125,8 +125,8 @@ bool VirtualWebcam::send_frame(const uint8_t* rgb_data, int width, int height, i
 
     for (int y = 0; y < height; y++) {
         const uint8_t* src_row = rgb_data + y * stride;
-        // Flip vertically: DirectShow expects bottom-up
-        uint8_t* dst_row = bgr_buf.data() + (height - 1 - y) * dst_stride;
+        // softcam handles bottom-up internally — no vertical flip needed
+        uint8_t* dst_row = bgr_buf.data() + y * dst_stride;
         for (int x = 0; x < width; x++) {
             dst_row[x * 3 + 0] = src_row[x * 3 + 2]; // B
             dst_row[x * 3 + 1] = src_row[x * 3 + 1]; // G
