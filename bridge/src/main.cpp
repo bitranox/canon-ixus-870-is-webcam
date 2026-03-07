@@ -127,6 +127,7 @@ struct Options {
     bool verbose = false;
     bool debug = false;
     int timeout_sec = 0;
+    std::string dump_dir;  // if non-empty, save raw H.264 frames to this directory
     std::vector<UploadEntry> uploads;
     bool reboot = false;
 };
@@ -191,6 +192,7 @@ static void print_usage(const char* prog) {
         "  --no-decode         Skip H.264 decode (measure raw PTP throughput)\n"
         "  --verbose           Show per-frame statistics\n"
         "  --debug             Per-frame CSV debug logging to stderr\n"
+        "  --dump-frames DIR   Save raw H.264 frames to DIR (for analysis)\n"
         "  --timeout N         Exit after N seconds (graceful shutdown)\n"
         "  --upload LOCAL REMOTE  Upload file to camera SD card, then exit\n"
         "                         (can be repeated; REMOTE uses A/ prefix for SD root)\n"
@@ -232,6 +234,8 @@ static Options parse_args(int argc, char* argv[]) {
             opts.debug = true;
         } else if (arg == "--timeout" && i + 1 < argc) {
             opts.timeout_sec = atoi(argv[++i]);
+        } else if (arg == "--dump-frames" && i + 1 < argc) {
+            opts.dump_dir = argv[++i];
         } else if (arg == "--reboot") {
             opts.reboot = true;
         } else if (arg == "--upload" && i + 2 < argc) {
@@ -533,6 +537,18 @@ int main(int argc, char* argv[]) {
             }
         }
         last_frame_num = mjpeg.frame_num;
+
+        // Dump raw frame to disk if --dump-frames is set
+        if (!opts.dump_dir.empty() && mjpeg.format != ptp::FRAME_FMT_DEBUG) {
+            char fname[512];
+            snprintf(fname, sizeof(fname), "%s/frame_%06u_%zu.h264",
+                     opts.dump_dir.c_str(), mjpeg.frame_num, mjpeg.data.size());
+            FILE* f = fopen(fname, "wb");
+            if (f) {
+                fwrite(mjpeg.data.data(), 1, mjpeg.data.size(), f);
+                fclose(f);
+            }
+        }
 
         // Handle debug frames — not video, just diagnostic data
         if (mjpeg.format == ptp::FRAME_FMT_DEBUG) {

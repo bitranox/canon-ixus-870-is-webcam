@@ -209,7 +209,7 @@ The bridge can upload files directly to the camera's SD card over USB (PTP), the
 
 - `--upload LOCAL REMOTE` can be repeated for multiple files. REMOTE paths use `A/` prefix for SD card root.
 - `--reboot` reboots the camera after upload so the new firmware is loaded.
-- Wait ~10 seconds after reboot before running the bridge again.
+- Wait ~2 seconds after reboot before running the bridge again.
 
 **Which files to upload:**
 - `DISKBOOT.BIN` — contains `movie_rec.c` (producer/spy_ring_write). Upload when movie_rec.c changes.
