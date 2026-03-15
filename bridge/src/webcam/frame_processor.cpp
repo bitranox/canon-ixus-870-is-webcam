@@ -2,7 +2,6 @@
 #include <cstring>
 #include <string>
 #include <algorithm>
-#include <cmath>
 
 #ifdef HAS_TURBOJPEG
 #include <turbojpeg.h>
@@ -104,46 +103,6 @@ struct FrameProcessor::Impl {
         jpeg_destroy_decompress(&cinfo);
         return true;
 #endif
-    }
-
-    // Bilinear upscale from decoded_buf to output
-    void bilinear_scale(uint8_t* dst, int dst_w, int dst_h, int dst_stride) {
-        if (decoded_width <= 0 || decoded_height <= 0) return;
-
-        int src_stride = decoded_width * 3;
-        float x_ratio = static_cast<float>(decoded_width) / dst_w;
-        float y_ratio = static_cast<float>(decoded_height) / dst_h;
-
-        for (int y = 0; y < dst_h; y++) {
-            float src_y = y * y_ratio;
-            int y0 = static_cast<int>(src_y);
-            int y1 = std::min(y0 + 1, decoded_height - 1);
-            float fy = src_y - y0;
-            float fy_inv = 1.0f - fy;
-
-            uint8_t* dst_row = dst + y * dst_stride;
-            const uint8_t* src_row0 = decoded_buf.data() + y0 * src_stride;
-            const uint8_t* src_row1 = decoded_buf.data() + y1 * src_stride;
-
-            for (int x = 0; x < dst_w; x++) {
-                float src_x = x * x_ratio;
-                int x0 = static_cast<int>(src_x);
-                int x1 = std::min(x0 + 1, decoded_width - 1);
-                float fx = src_x - x0;
-                float fx_inv = 1.0f - fx;
-
-                int x0_3 = x0 * 3;
-                int x1_3 = x1 * 3;
-
-                for (int c = 0; c < 3; c++) {
-                    float v = src_row0[x0_3 + c] * fx_inv * fy_inv
-                            + src_row0[x1_3 + c] * fx * fy_inv
-                            + src_row1[x0_3 + c] * fx_inv * fy
-                            + src_row1[x1_3 + c] * fx * fy;
-                    dst_row[x * 3 + c] = static_cast<uint8_t>(std::min(255.0f, std::max(0.0f, v + 0.5f)));
-                }
-            }
-        }
     }
 
     void flip_frame(uint8_t* data, int width, int height, int stride, bool h, bool v) {
@@ -248,28 +207,7 @@ bool FrameProcessor::process(const uint8_t* jpeg_data, int jpeg_size, RGBFrame& 
         return false;
     }
 
-    // TODO: upscaling temporarily disabled to see raw camera output
-#if 0
-    int out_w = impl_->config.output_width;
-    int out_h = impl_->config.output_height;
-    int out_stride = out_w * 3;
-
-    // If decoded size matches output, skip scaling
-    if (impl_->decoded_width == out_w && impl_->decoded_height == out_h) {
-        rgb_out.data = impl_->decoded_buf;
-        rgb_out.width = out_w;
-        rgb_out.height = out_h;
-        rgb_out.stride = out_stride;
-    } else {
-        // Scale to output size
-        rgb_out.data.resize(out_stride * out_h);
-        rgb_out.width = out_w;
-        rgb_out.height = out_h;
-        rgb_out.stride = out_stride;
-        impl_->bilinear_scale(rgb_out.data.data(), out_w, out_h, out_stride);
-    }
-#else
-    // Pass through at native decoded resolution
+    // Pass through at native decoded resolution (upscaling handled by H.264 sws_scale path)
     int out_w = impl_->decoded_width;
     int out_h = impl_->decoded_height;
     int out_stride = out_w * 3;
@@ -278,7 +216,6 @@ bool FrameProcessor::process(const uint8_t* jpeg_data, int jpeg_size, RGBFrame& 
     rgb_out.width = out_w;
     rgb_out.height = out_h;
     rgb_out.stride = out_stride;
-#endif
 
     // Apply flips if configured
     if (impl_->config.flip_horizontal || impl_->config.flip_vertical) {
