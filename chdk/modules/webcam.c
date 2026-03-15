@@ -425,12 +425,6 @@ static void webcam_get_status(webcam_status_t *status)
     status->width = frame_width;
     status->height = frame_height;
     status->frame_size = hw_jpeg_size;
-    status->hw_fail_call = 0;
-    status->hw_fail_soi = 0;
-    status->hw_fail_eoi = 0;
-    status->hw_available = 0;
-    status->diag_data = 0;
-    status->diag_len = 0;
 }
 
 // ============================================================

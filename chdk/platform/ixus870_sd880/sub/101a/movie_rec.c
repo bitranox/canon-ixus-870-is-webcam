@@ -126,19 +126,11 @@ static int __attribute__((used,noinline)) spy_skip_error_path(void)
     return (hdr[0] == 0x52455753) ? 1 : 0;
 }
 
-// Wrapper for TakeSemaphore (sub_FF8274B4) with shorter timeout when webcam is active.
-// Original firmware uses 1000ms timeout; SD card write stalls block the pipeline for
-// 2-4 seconds, causing PTP stalls (gf_rc=-1) on the bridge side.
-// When webcam is active: use 50ms timeout, return 0 (success) on timeout instead of 9.
-// When webcam is inactive: call with original timeout, return real result.
-// R0 = semaphore handle (passed through from caller's LDR R0, [R6,#0x14])
-// R1 = timeout (ignored when webcam active — we override to 50ms)
+// TakeSemaphore passthrough — calls firmware sub_FF8274B4 via function pointer.
+// Needed because sub_FF8274B4 has no linker stub, so BL from inline asm won't resolve.
+// JPCORE hardware encode completes in ~1-5ms; the original 1000ms timeout is correct.
 static int __attribute__((used,noinline)) spy_take_sem_short(int sem, int timeout)
 {
-    // Pass through to real TakeSemaphore with original timeout (1000ms).
-    // JPCORE hardware encode completes in ~1-5ms, so 1000ms never fires.
-    // Previous 50ms timeout caused fake-success when JPCORE was slow,
-    // corrupting pipeline state and stopping recording after ~2s.
     int (*real_take_sem)(int, int) = (int (*)(int, int))0xFF8274B4;
     return real_take_sem(sem, timeout);
 }

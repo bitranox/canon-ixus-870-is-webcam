@@ -998,12 +998,8 @@ static int handle_ptp(
                     ptp.param1 = 0;  // no frame (start response)
                     ptp.param2 = wc_status.active;
                     ptp.param3 = 0;
-                    ptp.param4 = 0xBEEF;  // marker: start success with diagnostics
-                    if (wc_status.diag_data && wc_status.diag_len > 0) {
-                        send_ptp_data(data, (const char *)wc_status.diag_data, wc_status.diag_len);
-                    } else {
-                        send_ptp_data(data, "\0", 1);
-                    }
+                    ptp.param4 = 0xBEEF;  // marker: start success
+                    send_ptp_data(data, "\0", 1);
                     break;
                 }
             }
@@ -1025,22 +1021,12 @@ static int handle_ptp(
                         ptp.code = PTP_RC_GeneralError;
                     }
                 } else {
-                    // Return diagnostic info: active state, get_frame rc, hw failure reasons
-                    // Encode hw_fail counters into param4: call|soi|eoi|hw_available (8 bits each)
-                    unsigned int hw_diag = ((wc_status.hw_fail_call & 0xFF) << 24) |
-                                           ((wc_status.hw_fail_soi & 0xFF) << 16) |
-                                           ((wc_status.hw_fail_eoi & 0xFF) << 8) |
-                                           (wc_status.hw_available & 0xFF);
                     ptp.num_param = 4;
                     ptp.param1 = 0;  // no frame
                     ptp.param2 = wc_status.active;
                     ptp.param3 = (unsigned)gf_rc;
-                    ptp.param4 = hw_diag;
-                    if (wc_status.diag_data && wc_status.diag_len > 0) {
-                        send_ptp_data(data, (const char *)wc_status.diag_data, wc_status.diag_len);
-                    } else {
-                        send_ptp_data(data, "\0", 1);
-                    }
+                    ptp.param4 = 0;
+                    send_ptp_data(data, "\0", 1);
                 }
             } else {
                 ptp.code = PTP_RC_GeneralError;
