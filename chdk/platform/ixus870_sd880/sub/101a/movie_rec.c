@@ -92,6 +92,32 @@ static void __attribute__((used,noinline)) spy_cache_invalidate(unsigned char *p
     }
 }
 
+// Suppress MOV file creation when webcam is active.
+// Called from movie_record_task case 2 (after sub_FF85DE1C finishes recording init).
+//
+// sub_FF85DE1C → XREF_FUN_ff92f734 sets ring_buf+0x50 (filename) and posts
+// msg 1 to task_MovWrite's queue.  We can't prevent that (it's in ROM).
+// But task_MovWrite has a built-in cancel mechanism: when ring_buf+0x88 == 1,
+// it enters "drain mode" — consumes queued messages without processing them.
+// FUN_ff9309e4 (case 1 = file creation) never runs, so no MOV file is created.
+//
+// Timing: spy_suppress_mov runs in movie_record_task (after sub_FF85DE1C),
+// before movie_record_task yields at ReceiveMessageQueue.  spy_ring_write
+// clears +0x88 back to 0 on the first frame, so subsequent messages
+// (case 2 = frame write) are processed normally (but writes are still
+// skipped because +0x80 = 0).
+//
+// Also sets +0x48 = -1 (invalid fd) as a safety measure — prevents case 7
+// (file close) from closing a stale fd if one exists from a previous recording.
+static void __attribute__((used,noinline)) spy_suppress_mov(void)
+{
+    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
+    if (hdr[0] == 0x52455753) {
+        *(volatile unsigned int *)0x89F0 = 1;           // ring_buf+0x88: drain mode
+        *(volatile unsigned int *)0x89B0 = 0xFFFFFFFF;  // ring_buf+0x48: fd = -1
+    }
+}
+
 // Check if webcam is active. Returns 1 to skip error path, 0 for normal error handling.
 // Called from error paths in sub_FF85D98C_my to prevent STATE=1 (permanent pipeline death).
 static int __attribute__((used,noinline)) spy_skip_error_path(void)
@@ -165,6 +191,13 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
         // task_MovWrite checks this before every file write; when 0,
         // it skips the write but still updates the consumed pointer.
         *(volatile unsigned int *)0x89E8 = 0;
+
+        // Clear drain mode so task_MovWrite processes frame messages normally.
+        // spy_suppress_mov set +0x88=1 during init to drain the file-creation
+        // message.  Now that frames are flowing, clear it so case 2 (write)
+        // messages reach the consumed-pointer update path (writes still skip
+        // because +0x80=0 above).
+        *(volatile unsigned int *)0x89F0 = 0;
 
         // Stall detection: report inter-call gaps > 50ms via debug frame.
         // Helps identify what's blocking movie_record_task during clustered drops.
@@ -287,6 +320,7 @@ void __attribute__((naked,noinline)) movie_record_task(){
  "loc_FF85E0D4:\n"
                  "BL      unlock_optical_zoom\n" // + (used ixus980)
                  "BL      sub_FF85DE1C\n"
+                 "BL      spy_suppress_mov\n"    // + drain task_MovWrite msg 1 (no MOV file)
                  "B       loc_FF85E120\n"
  "loc_FF85E0DC:\n"
                  "BL      sub_FF85D98C_my\n"  //--------------->

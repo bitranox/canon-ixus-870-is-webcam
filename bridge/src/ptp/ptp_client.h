@@ -127,6 +127,10 @@ public:
     // data: file contents
     bool upload_file(const std::string& remote_path, const std::vector<uint8_t>& data);
 
+    // Read a script message from camera (after execute_script)
+    // Returns the message string, or empty if no message available
+    bool read_script_msg(std::string& msg);
+
     // Read camera memory via CHDK_GetMemory
     // address: camera RAM address to read from
     // size: number of bytes to read

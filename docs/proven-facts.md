@@ -1,6 +1,6 @@
 # Proven Facts — Canon IXUS 870 IS Webcam Project
 
-Last updated: 2026-03-07
+Last updated: 2026-03-15
 
 This document contains ONLY verified, tested facts. No speculation, no history.
 Each fact includes the evidence that proved it.
@@ -38,12 +38,15 @@ The ring buffer struct is always at RAM address 0x8968. Confirmed by reading
 | +0x1C | 0x8984 | ptr | (varies) | Current read pointer (advances each frame) | MovieFrameGetter decompilation line 971 |
 | +0x28 | 0x8990 | uint | 0→1→2→... | Frame counter (incremented by MovieFrameGetter) | Debug probe: FCnt=2 on second call |
 | +0x40 | 0x89A8 | uint | | Max frame count | MovieFrameGetter decompilation line 918 |
+| +0x48 | 0x89B0 | int | fd or -1 | **task_MovWrite file descriptor**: -1=invalid, >0=open file | Ghidra decompilation (case 7 checks fd > 0) |
+| +0x50 | 0x89B8 | ptr | filename string | **MOV output filename**: set by XREF_FUN_ff92f734, checked != 0 by case 1 | Ghidra decompilation + v35 test |
 | +0x70 | 0x89D8 | uint | 0x00040000 (256KB) | Frame buffer capacity (NOT individual frame size) | Debug probe: FSiz=0x40000 |
 | +0xC0 | 0x8A28 | ptr | 0x412C4720 | **First-frame pointer** — SPS+PPS+IDR data | Debug probe: FPtr=0x412C4720, bytes confirm SPS |
 | +0xC4 | 0x8A2C | ptr | | Alternate/wrap buffer pointer | MovieFrameGetter decompilation line 973 |
 | +0xC8 | 0x8A30 | ptr | | Buffer end pointer | MovieFrameGetter decompilation line 970 |
 | +0xD4 | 0x8A3C | uint | | Running data offset (for MOV sample table) | MovieFrameGetter decompilation line 965 |
 | +0x80 | 0x89E8 | uint | 0 or 1 | **task_MovWrite is_open flag**: 1=file open, 0=skip writes | Ghidra decompilation + v26g test |
+| +0x88 | 0x89F0 | uint | 0 or 1 | **task_MovWrite drain flag**: 1=drain all messages, 0=normal | Ghidra decompilation + v35 test |
 | +0xD8 | 0x8A40 | uint | 0x000158AC (88236) | IDR offset in data area (MOV container metadata) | Multiple debug probes, consistent value |
 | +0xDC | 0x8A44 | uint | 0x0000CFE8 (53224) | IDR size in data area | Debug probe: ISiz=0xCFE8 |
 
@@ -246,7 +249,12 @@ JPCORE encode pipeline (runs unmodified)
     │ → sub_FF8EDC88 (cleanup) → sub_FF9300B4 (ring buffer free)
     │ → posts message to task_MovWrite queue
     ▼
+spy_suppress_mov (called after sub_FF85DE1C in movie_record_task case 2)
+    │ sets +0x88=1 (drain mode) → task_MovWrite drains msg 1 (no file created)
+    │ spy_ring_write clears +0x88=0 on first frame → normal processing resumes
+    ▼
 task_MovWrite (0xFF92F1EC)
+    │ msg 1: drained (never reaches FUN_ff9309e4) → no MOV file created
     │ case 2: checks +0x80 → finds 0 → skips FUN_ff85235c
     │ still updates consumed pointer (+0x18) → pipeline keeps flowing
     ▼
@@ -268,7 +276,7 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 | Frames decoded | 1784/1798 (99.2%) | v34: 14 initial P-frames before first IDR |
 | Decoded FPS | 30.0 fps | v34: matches camera output rate |
 | IDR keyframes | ~120 in 60s (~2/sec, GOP ~15) | v34 bridge output |
-| SD card writes | 0 bytes | 0-byte MOV file, SD usage unchanged |
+| SD card writes | 0 bytes | No MOV file created (drain mode suppresses file creation) |
 | Max decode streak | 1784 (cam#16-cam#1859) | v34: perfect after first natural IDR |
 | Heap allocation | 0 bytes (static 512B debug buf) | v34: zero-copy, no malloc |
 | PTP RTT | min=3.2ms avg=16.4ms max=59.7ms | v34 bridge output |
@@ -392,6 +400,33 @@ With yield restored: stable operation, correct frame sizes.
 
 **Evidence**: v34 removed all IDR injection code (~100 lines). The camera's H.264 encoder produces IDR keyframes autonomously every ~11 frames (~2.5/sec at 30fps). FFmpeg decoder discards the first ~14 P-frames (0.5s startup delay) then achieves 100% decode from the first natural IDR onward. v34 60s test: 1784 consecutive successful decodes after cam#16.
 **Implication**: The 0.5s startup delay is acceptable. The simpler code (489 vs 615 lines) and eliminated heap allocation outweigh the minor startup cost.
+
+### 29. task_MovWrite drain mode (+0x88) suppresses MOV file creation
+
+**Evidence**: Ghidra decompilation of task_MovWrite (0xFF92F1EC) reveals a built-in cancel mechanism:
+```c
+if (*(int *)(iVar1 + 0x88) != 1) break;  // exit drain if +0x88 != 1
+// drain: consume all queued messages without processing, give semaphore, loop
+```
+When `ring_buf+0x88 == 1`, task_MovWrite enters "drain mode" — it receives messages from the queue but skips all case handlers (case 1 = file creation, case 2 = write, case 7 = close). Messages are consumed and discarded.
+
+**Mechanism**:
+1. `spy_suppress_mov()` runs in movie_record_task (case 2, after `sub_FF85DE1C` completes recording init). Sets `*(0x89F0) = 1` (+0x88 = drain mode) and `*(0x89B0) = 0xFFFFFFFF` (+0x48 = fd = -1, safety measure).
+2. `sub_FF85DE1C` → `XREF_FUN_ff92f734` sets +0x50 (filename) and posts msg 1 to task_MovWrite's queue. This is in ROM and cannot be prevented.
+3. task_MovWrite receives msg 1 but finds +0x88 == 1 → drains it. FUN_ff9309e4 (file creation) never runs. No MOV file is created.
+4. `spy_ring_write()` clears `*(0x89F0) = 0` on the first frame → task_MovWrite exits drain mode. Subsequent case 2 messages are processed normally (but writes skip because +0x80 = 0).
+
+**Test results**:
+- 5s test: 134 frames, 29.6 FPS, 0 USB errors, **0 MOV files created**
+- 10s test: 286 frames, 30.0 FPS, 0 USB errors, **0 MOV files created**
+
+**Addresses**: +0x88 = 0x89F0 (drain flag), +0x48 = 0x89B0 (fd), +0x50 = 0x89B8 (filename)
+
+**Failed alternatives**:
+- Clear +0x50 to 0: FUN_ff9309e4 checks `+0x50 != 0` before ALL init — skips entire pipeline, 0 frames
+- Set +0x50 to empty string: FUN_ff823fd4("") crashes parsing empty path
+
+**Implication**: Drain mode is the correct and only way to suppress MOV file creation without breaking the recording pipeline. It uses the firmware's own cancel mechanism rather than trying to selectively skip file creation within FUN_ff9309e4.
 
 ## What Needs to Happen Next
 

@@ -944,6 +944,35 @@ bool PTPClient::execute_script(const std::string& script) {
     return impl_->receive_response(resp) && resp.code == PTP_RC_OK;
 }
 
+bool PTPClient::read_script_msg(std::string& msg) {
+    PTPContainer resp{};
+    std::vector<uint8_t> data;
+    if (!impl_->chdk_command(CHDK_ReadScriptMsg, 0, 0, 0, resp, &data)) {
+        return false;
+    }
+    if (resp.code != PTP_RC_OK || data.size() < 10) {
+        msg.clear();
+        return true;  // no message available (not an error)
+    }
+    // CHDK script message format:
+    // [4 bytes type][4 bytes subtype][4 bytes script_id][4 bytes size][data...]
+    // type 0 = none, type 1 = error, type 2 = return, type 3 = user (write_usb_msg)
+    uint32_t mtype = 0;
+    memcpy(&mtype, data.data(), 4);
+    if (mtype == 0) {
+        msg.clear();
+        return true;  // no message
+    }
+    if (data.size() > 16) {
+        msg.assign(reinterpret_cast<const char*>(data.data() + 16), data.size() - 16);
+        // Remove trailing null if present
+        while (!msg.empty() && msg.back() == '\0') msg.pop_back();
+    } else {
+        msg.clear();
+    }
+    return true;
+}
+
 bool PTPClient::read_memory(uint32_t address, uint32_t size, std::vector<uint8_t>& data) {
     PTPContainer resp{};
     if (!impl_->chdk_command(CHDK_GetMemory, address, size, 0, resp, &data)) {

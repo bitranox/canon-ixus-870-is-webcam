@@ -130,6 +130,7 @@ struct Options {
     std::string dump_dir;  // if non-empty, save raw H.264 frames to this directory
     std::vector<UploadEntry> uploads;
     bool reboot = false;
+    std::string exec_script;  // Lua script to execute on camera
 };
 
 // AVCC frame validation
@@ -238,6 +239,8 @@ static Options parse_args(int argc, char* argv[]) {
             opts.dump_dir = argv[++i];
         } else if (arg == "--reboot") {
             opts.reboot = true;
+        } else if (arg == "--exec" && i + 1 < argc) {
+            opts.exec_script = argv[++i];
         } else if (arg == "--upload" && i + 2 < argc) {
             UploadEntry e;
             e.local_path = argv[++i];
@@ -327,6 +330,38 @@ int main(int argc, char* argv[]) {
             return fail > 0 ? 1 : 0;
         }
         // Fall through to reboot
+    }
+
+    // --- Exec mode: run Lua script on camera and print output ---
+    if (!opts.exec_script.empty()) {
+        if (!client.execute_script(opts.exec_script)) {
+            fprintf(stderr, "ERROR: execute_script failed: %s\n", client.get_last_error().c_str());
+            client.disconnect();
+            return 1;
+        }
+        // Wait for script to finish, then read result from 0xFF800
+        Sleep(2000);
+        // Poll for any script messages
+        for (int i = 0; i < 10; i++) {
+            std::string msg;
+            if (client.read_script_msg(msg)) {
+                if (!msg.empty()) {
+                    printf("%s\n", msg.c_str());
+                    if (msg == "DONE") break;
+                }
+            }
+            Sleep(100);
+        }
+        // Also read 4 bytes from 0xFF800 (script can poke results here)
+        std::vector<uint8_t> mem;
+        if (client.read_memory(0xFF800, 4, mem) && mem.size() >= 4) {
+            uint32_t val = mem[0] | (mem[1]<<8) | (mem[2]<<16) | (mem[3]<<24);
+            printf("[mem@0xFF800] = %u (0x%08X)\n", val, val);
+        }
+        if (!opts.reboot) {
+            client.disconnect();
+            return 0;
+        }
     }
 
     if (opts.reboot) {

@@ -53,6 +53,7 @@ static int webcam_stop(void);              // forward declaration for use in web
 // Small static buffer for debug frames only (H.264 frames use zero-copy)
 static unsigned char debug_frame_buf[512];
 
+
 // ============================================================
 // Shared memory: seqlock data + msleep polling
 // Data delivery uses seqlock protocol (proven at 22fps).

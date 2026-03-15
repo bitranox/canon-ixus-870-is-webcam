@@ -3431,3 +3431,113 @@ Eliminate the 64KB `frame_data_buf` malloc and memcpy by passing ring buffer poi
 | v34 | zero-copy, no IDR injection | 99.2% | 30.0 | 1784 | 0 (static 512B only) |
 
 The 0.2% decode rate difference is due to removing IDR injection — 14 initial P-frames are now dropped instead of being preceded by an injected IDR. This is a deliberate tradeoff: simpler code, less heap usage, ~0.5s startup delay. The max streak difference (4960 vs 1784) is a session length artifact (10min vs 60s), not a regression.
+
+## v35 — Suppress MOV file creation (drain mode) — 2026-03-15
+
+### Goal
+
+Prevent the camera from creating empty MOV files on the SD card during webcam recording. The recording pipeline must remain intact — only file I/O should be suppressed.
+
+### Investigation: task_MovWrite decompilation
+
+Created `firmware-analysis/DecompileMovWriter.java` to decompile task_MovWrite (0xFF92F1EC) and its call chain. Key discovery: task_MovWrite has a built-in **drain mode** at `ring_buf+0x88`:
+
+```c
+// From Ghidra decompilation of task_MovWrite:
+do {
+    while( true ) {
+        FUN_ff8279c0(*(iVar1 + 0xc),&local_20,0,...); // ReceiveMessageQueue
+        if (*(int *)(iVar1 + 0x88) != 1) break;       // exit drain if +0x88 != 1
+        // drain: consume all queued messages, give semaphore, loop
+        if (*(int *)(iVar1 + 0x80) == 1) {
+            *(iVar1 + 0x48) = 0xffffffff;  // close file
+            *(iVar1 + 0x80) = 0;
+        }
+        FUN_ff827584(*(iVar1 + 8));  // GiveSemaphore
+    }
+    // normal case processing: case 1 (file create), case 2 (write), case 7 (close)
+} while( true );
+```
+
+When `+0x88 == 1`, task_MovWrite consumes messages from the queue without processing any case handlers. This is the firmware's own cancel mechanism.
+
+### Failed approach 1: Clear +0x50 (filename) to 0
+
+Attempted clearing `ring_buf+0x50` (filename pointer at 0x89B8) to 0 from webcam.c after StartMovieRecord. Result: **0 frames, USB timeouts**. FUN_ff9309e4 (case 1 handler) checks `+0x50 != 0` before ALL initialization — setting to 0 skips the entire pipeline setup, not just file creation.
+
+### Failed approach 2: Set +0x50 to empty string
+
+Set +0x50 to point to an empty string (`""`). Result: **camera crash, battery pull required**. FUN_ff823fd4 (mkdir) crashes when parsing an empty path string.
+
+### Solution: Drain mode (+0x88)
+
+The key insight: FUN_ff9309e4 (case 1) bundles essential pipeline initialization with file creation. There's no way to selectively skip file creation within case 1. The correct approach is to prevent case 1 from running at all, using the firmware's drain mode.
+
+**Implementation** (movie_rec.c):
+
+1. **`spy_suppress_mov()`** — called in movie_record_task case 2, after `sub_FF85DE1C` completes recording init:
+   - Sets `*(0x89F0) = 1` (ring_buf+0x88 = drain mode)
+   - Sets `*(0x89B0) = 0xFFFFFFFF` (ring_buf+0x48 = fd = -1, safety)
+   - Only activates when webcam magic (0x52455753) is present at hdr[0]
+
+2. **Timing chain**:
+   - `sub_FF85DE1C` → `XREF_FUN_ff92f734` sets +0x50 (filename) and posts msg 1 to task_MovWrite queue
+   - `spy_suppress_mov` runs immediately after (still in movie_record_task, before yield)
+   - task_MovWrite receives msg 1 but finds +0x88 == 1 → drains it
+   - FUN_ff9309e4 never executes → no file created
+
+3. **`spy_ring_write()`** — clears `*(0x89F0) = 0` on the first frame:
+   - Exits drain mode so subsequent case 2 messages are processed normally
+   - Case 2 writes still skip because +0x80 = 0 (existing SD write prevention)
+
+**Also removed** from webcam.c: the now-redundant +0x50 clearing block that was added in the initial failed attempt.
+
+### Assembly patch
+
+```asm
+"loc_FF85E0D4:\n"
+             "BL      unlock_optical_zoom\n"
+             "BL      sub_FF85DE1C\n"
+             "BL      spy_suppress_mov\n"    // + drain task_MovWrite msg 1 (no MOV file)
+             "B       loc_FF85E120\n"
+```
+
+### Test results
+
+**5-second test:**
+```
+=== SESSION SUMMARY ===
+  Received: 134 frames
+  Dropped:  2 (decode failures)
+  Decoded FPS: 29.6
+  USB errors:   send=0 recv=0 timeout=0 io=0
+=======================
+```
+
+MOV file count on SD card: **0 new MOV files** (confirmed by `dir A:\DCIM\101___11 /B | find /C ".MOV"`)
+
+**10-second test:**
+```
+=== SESSION SUMMARY ===
+  Received: 286 frames
+  Dropped:  2 (decode failures)
+  Decoded FPS: 30.0
+  USB errors:   send=0 recv=0 timeout=0 io=0
+=======================
+```
+
+MOV file count: **still 0 new MOV files**. Pipeline runs at full 30fps with no degradation.
+
+### Performance comparison
+
+| Version | Approach | Decode% | FPS | MOV Files | Key Change |
+|---------|----------|---------|-----|-----------|------------|
+| v34 | zero-copy, +0x80 write prevention only | 99.2% | 30.0 | 1 (empty) | SD writes skipped but file created |
+| v35 | zero-copy + drain mode MOV suppression | 99.3% | 30.0 | 0 | File creation suppressed entirely |
+
+### Files changed
+
+- `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — added spy_suppress_mov(), BL in case 2, +0x88 clearing in spy_ring_write
+- `chdk/modules/webcam.c` — removed redundant +0x50 clearing block
+- `firmware-analysis/DecompileMovWriter.java` — new Ghidra script for task_MovWrite decompilation
+- `firmware-analysis/movwriter_decompiled.txt` — Ghidra decompilation output
