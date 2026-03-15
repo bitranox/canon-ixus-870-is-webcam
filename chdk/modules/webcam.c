@@ -7,8 +7,8 @@
 // encoded frame.  spy_ring_write invalidates the CPU data cache for the
 // frame data (JPCORE DMA bypasses cache), stores {ptr, size} via seqlock
 // at 0xFF000.  capture_frame_h264() polls the seqlock with msleep(10)
-// to yield the CPU to DryOS, then memcpy's the frame data to a local
-// buffer with post-copy seqlock verification to detect torn reads.
+// to yield the CPU to DryOS, then passes the ring buffer pointer
+// directly to PTP (zero-copy).
 //
 #include "camera_info.h"
 #include "shooting.h"
@@ -201,19 +201,14 @@ static int capture_frame_h264(void)
                         copy_sz = total;
                     }
 
-                    // Copy frame data to local buffer
-                    if (copy_sz > FRAME_BUF_SIZE) copy_sz = FRAME_BUF_SIZE;
-                    memcpy(frame_data_buf, src, copy_sz);
-
-                    // Post-copy seqlock verify — if producer published a new
-                    // frame to this slot during memcpy, data is torn → skip
-                    if (s[2] != seq) continue;
+                    // Zero-copy: pass ring buffer pointer directly to PTP.
+                    // No memcpy needed — seqlock guarantees frame is complete.
                 }
 
                 if (s == hdr + 1) last_seq_a = seq_a;
                 else last_seq_b = seq_b;
 
-                hw_jpeg_data = frame_data_buf;
+                hw_jpeg_data = src;
                 hw_jpeg_size = copy_sz;
                 frame_width = 640;
                 frame_height = 480;

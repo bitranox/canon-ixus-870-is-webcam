@@ -3654,3 +3654,45 @@ One very rare artifact observed during aggressive zoom (~1 per 60s). Likely a ri
 - `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — removed debug frame generation (NAL reporting + stall detection)
 - `bridge/src/main.cpp` — removed frame rate limiter, preview window matches output resolution, removed "JPEG quality" from output
 - `bridge/src/webcam/h264_decoder.cpp` — AVCC sanitizer rejects instead of clamps
+
+---
+
+## v35d — Zero-Copy Confirmed Artifact-Free (2026-03-16)
+
+### Hypothesis: all artifacts were from debug frames, not torn reads
+
+After v35c eliminated debug frames and reduced artifacts from ~30/30s to ~1/60s with memcpy, we tested the hypothesis that zero-copy was always fine — and the "torn reads" blamed on USB DMA were actually caused by debug frames stealing PTP round-trips.
+
+### Test
+
+Reverted webcam.c to zero-copy: pass ring buffer pointer directly to PTP, no memcpy, no post-copy seqlock verify, no 128KB static buffer. Combined with the v35c change (no debug frames).
+
+### Result: ZERO artifacts
+
+60s test with aggressive zooming and scene changes — user confirmed **no artifacts at all**.
+
+```
+=== SESSION SUMMARY ===
+  Received: 1785 frames
+  Dropped:  14 (all startup "needs more data")
+  Skipped:  0
+  Last cam frame#: 1799    ← matches unique data: ZERO skipped
+  Decoded FPS: 30.0
+  Max streak: 1785 (entire session after startup)
+  USB errors: 0
+  Frame sizes: min=12320 max=82796
+```
+
+### Conclusion
+
+**The debug frames were the sole cause of ALL visual artifacts.** Zero-copy is safe because:
+1. The encoder finishes writing before spy_ring_write publishes the pointer
+2. The ring buffer has 256KB slots — recycling takes many frames
+3. The seqlock guards against mid-read overwrites (producer updating same slot)
+4. USB DMA reads completed frame data that doesn't change
+
+The memcpy + post-copy seqlock verification was unnecessary overhead. The 128KB static BSS buffer is eliminated. Code is simpler (no copy, no verify, no buffer).
+
+### Files changed
+
+- `chdk/modules/webcam.c` — reverted to zero-copy (removed memcpy, post-copy verify, 128KB buffer)

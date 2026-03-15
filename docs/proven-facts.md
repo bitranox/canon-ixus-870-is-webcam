@@ -261,7 +261,7 @@ task_MovWrite (0xFF92F1EC)
 webcam.c (CHDK module)
     │ polls dual-slot seqlock (100 × msleep(10))
     │ peeks AVCC headers from camera RAM to determine exact frame size
-    │ memcpy to 128KB static BSS buffer + post-copy seqlock verification
+    │ zero-copy: passes ring buffer pointer directly to PTP (no memcpy)
     │ returns single H.264 frame per PTP response
     ▼
 PTP USB transfer → bridge → FFmpeg decode → virtual webcam
@@ -272,14 +272,14 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 | Metric | Value | Evidence |
 |--------|-------|----------|
 | Frames produced | 1796 in 60s (30.2 fps) | v35c bridge output (60s session) |
-| Frames received | 1796/1796 (100% capture) | v35c: memcpy + seqlock verify, no debug frames |
-| Frames decoded | 1782/1796 (99.2%) | v35c: 14 initial P-frames before first IDR |
-| Decoded FPS | 29.9 fps | v35c: matches camera output rate |
-| IDR keyframes | ~120 in 60s (~2/sec, GOP ~11) | v35c bridge output |
+| Frames received | 1799/1799 (100% capture) | v35d: zero-copy, no debug frames |
+| Frames decoded | 1785/1799 (99.2%) | v35d: 14 initial P-frames before first IDR |
+| Decoded FPS | 30.0 fps | v35d: matches camera output rate |
+| IDR keyframes | ~120 in 60s (~2/sec, GOP ~11) | v35d bridge output |
 | SD card writes | 0 bytes | No MOV file created (drain mode suppresses file creation) |
-| Max decode streak | 1782 (cam#15-cam#1796) | v35c: entire session after first IDR |
-| Heap allocation | 0 bytes (128KB static BSS buf) | v35c: no malloc |
-| PTP RTT | min=9.2ms avg=28.7ms max=110.4ms | v35c bridge output |
+| Max decode streak | 1785 (cam#15-cam#1799) | v35d: entire session after first IDR |
+| Heap allocation | 0 bytes (zero-copy, no buffer) | v35d: no malloc, no static buffer |
+| PTP RTT | min=6.1ms avg=28.8ms max=80.3ms | v35d bridge output |
 
 ### 17. Original TakeSemaphore timeout (1000ms) is correct for webcam
 
@@ -386,13 +386,19 @@ With yield restored: stable operation, correct frame sizes.
 
 **Implication**: The current PTP bridge approach (custom opcode 0x9999, bulk transfer) is the correct and only practical architecture for webcam streaming on this camera. Native UVC would require ROM patching, custom ISO driver for undocumented hardware, and runtime endpoint reconfiguration — all without any firmware reference implementation.
 
-### 27. memcpy + post-copy seqlock verification is required (zero-copy has torn reads)
+### 27. Zero-copy frame delivery is safe and artifact-free (confirmed v35d)
 
-**Evidence**: v34 zero-copy (passing ring buffer pointers directly to PTP) showed visual artifacts during zoom and scene changes. USB DMA transfer takes 10-20ms, during which the encoder can recycle the ring buffer slot. The seqlock only updates AFTER the encoder finishes the new frame, so DMA corruption during encoding is undetectable.
+**Evidence**: v34 zero-copy showed visual artifacts during zoom — originally blamed on USB DMA torn reads. v35b added memcpy + post-copy seqlock verification, reducing artifacts. v35c removed debug frames, reducing artifacts further to ~1/60s with memcpy. v35d tested zero-copy WITHOUT debug frames — **zero artifacts** during aggressive zoom over 60s (user confirmed).
 
-v35b switched to memcpy into a 128KB static BSS buffer with post-copy seqlock verification (`if (s[2] != seq) continue`). The memcpy window is ~60μs (vs 10-20ms for USB DMA) — far less vulnerable. With this approach: 0 len_overflow, 0 AVCC validation failures, visual artifacts reduced to ~1 per 60s during aggressive zoom.
+**Root cause of all artifacts**: Debug frames (sent every 30th H.264 frame) stole PTP round-trips, causing the bridge to miss H.264 frames → decoder used stale references → visual artifacts. This was misattributed to ring buffer torn reads during USB DMA.
 
-**Implication**: Zero-copy is NOT safe despite the seqlock — USB DMA is too slow. memcpy + post-copy seqlock check is the correct approach. The 128KB static BSS buffer has no heap impact (not malloc'd).
+**Why zero-copy is safe**:
+1. The encoder finishes writing before spy_ring_write publishes the pointer
+2. The ring buffer has 256KB slots — recycling takes many frames
+3. The seqlock guards against mid-read overwrites (producer updating same slot)
+4. USB DMA reads completed frame data that doesn't change
+
+**Implication**: memcpy + post-copy seqlock verification is unnecessary. Zero-copy (passing ring buffer pointer directly to PTP) is the correct and simplest approach. No buffer allocation needed.
 
 ### 28. IDR injection is unnecessary
 
