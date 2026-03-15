@@ -285,7 +285,7 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 
 **Evidence**: v31c reverted spy_take_sem_short from 50ms fake-success to passthrough with original 1000ms timeout. Result: 226/235 decoded (96.2%), 22.6fps, max streak 210 frames, full 10s session. Previous 50ms timeout caused intermittent recording death after ~2s.
 **Mechanism**: JPCORE hardware encode completes in ~1-5ms. The 1000ms timeout never fires during normal operation. The 50ms timeout occasionally fired when JPCORE was slow (e.g. IDR frames), returning fake success while [SP,#0x38] was still non-zero. Even with error path bypass, the corrupted JPCORE state caused pipeline instability.
-**Implication**: spy_take_sem_short is now a simple passthrough. The error path bypass (proven fact #16) remains as a safety net but should rarely fire with 1000ms timeout.
+**Implication**: spy_take_sem_short is now a simple passthrough. The error path bypass (proven fact #16) remains as a safety net but should rarely fire with 1000ms timeout. Note: spy_take_sem_short cannot be removed — sub_FF8274B4 has no linker stub in stubs_entry.S, so `BL sub_FF8274B4` from inline asm crashes. The C function pointer indirection (`(int (*)(int, int))0xFF8274B4`) is required.
 
 ### 18. IDR frames ARE lost to single-slot seqlock overwrites
 

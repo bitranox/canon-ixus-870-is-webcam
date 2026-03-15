@@ -3541,3 +3541,41 @@ MOV file count: **still 0 new MOV files**. Pipeline runs at full 30fps with no d
 - `chdk/modules/webcam.c` — removed redundant +0x50 clearing block
 - `firmware-analysis/DecompileMovWriter.java` — new Ghidra script for task_MovWrite decompilation
 - `firmware-analysis/movwriter_decompiled.txt` — Ghidra decompilation output
+
+## v35b — Code cleanup: remove legacy MJPEG fields — 2026-03-15
+
+### Goal
+
+Clean up stale code from the MJPEG-era design that no longer serves any purpose in the H.264 zero-copy architecture.
+
+### Changes
+
+1. **Removed 6 dead status fields from `webcam_status_t`** (webcam.h):
+   - `hw_fail_call`, `hw_fail_soi`, `hw_fail_eoi` — MJPEG hardware encoder failure counters, always 0
+   - `hw_available` — MJPEG hardware encoder presence flag, always 0
+   - `diag_data`, `diag_len` — diagnostic buffer pointer/length, always NULL/0
+
+2. **Updated ptp.c** to match — removed reads of the deleted fields. This was critical: the old code read `wc_status.diag_data` (now stack garbage) and if non-null, called `send_ptp_data` from the garbage pointer.
+
+3. **Cleaned up `spy_take_sem_short` comment** (movie_rec.c): Old comment described the removed 50ms timeout optimization. New comment explains why the function exists (sub_FF8274B4 has no linker stub, so `BL` from inline asm won't resolve — needs C function pointer indirection).
+
+4. **Updated webcam.h header**: replaced MJPEG references with H.264, fixed struct field comments.
+
+### Failed attempt: remove spy_take_sem_short entirely
+
+Replaced `BL spy_take_sem_short` with `BL sub_FF8274B4` in the inline asm. Camera crashed — sub_FF8274B4 has no entry in `stubs_entry.S`, so the linker can't resolve the symbol. The function pointer indirection in spy_take_sem_short (`(int (*)(int, int))0xFF8274B4`) works because it bypasses the linker. Confirmed in isolated test (v35b retest): with ptp.c already fixed, `BL sub_FF8274B4` alone still crashes. Both issues were real.
+
+### Failed attempt: remove struct fields without updating ptp.c
+
+First upload crashed the camera. `ptp.c` declares `webcam_status_t` on the stack and reads `diag_data`/`diag_len`/`hw_fail_*` fields. With those fields removed from the struct, the reads hit uninitialized stack memory. `diag_data` (now garbage) passed the null check, and `send_ptp_data` tried to read from the garbage pointer — crashing the PTP handler.
+
+### Test result
+
+After fixing both issues: 10s, 286 decoded, 29.9 FPS, 0 USB errors, 95.3% decode (14 initial P-frames before first IDR as expected).
+
+### Files changed
+
+- `chdk/modules/webcam.h` — removed 6 legacy MJPEG status fields, updated comments
+- `chdk/modules/webcam.c` — removed 6 zero-assignments in webcam_get_status
+- `chdk/core/ptp.c` — removed reads of deleted fields (crash fix)
+- `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — cleaned up spy_take_sem_short comment

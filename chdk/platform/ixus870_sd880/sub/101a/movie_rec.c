@@ -127,7 +127,8 @@ static int __attribute__((used,noinline)) spy_skip_error_path(void)
 }
 
 // TakeSemaphore passthrough — calls firmware sub_FF8274B4 via function pointer.
-// Needed because sub_FF8274B4 has no linker stub, so BL from inline asm won't resolve.
+// sub_FF8274B4 has no linker stub, so BL from inline asm won't resolve (confirmed:
+// direct BL crashes camera). The C function pointer indirection is required.
 // JPCORE hardware encode completes in ~1-5ms; the original 1000ms timeout is correct.
 static int __attribute__((used,noinline)) spy_take_sem_short(int sem, int timeout)
 {
