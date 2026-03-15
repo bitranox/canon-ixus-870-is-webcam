@@ -191,6 +191,7 @@ use Lua get_usb_capture_support to check
 // Webcam streaming flags (param3 of PTP_CHDK_GetMJPEGFrame)
 #define PTP_CHDK_WEBCAM_START   0x1  // Start webcam streaming
 #define PTP_CHDK_WEBCAM_STOP    0x2  // Stop webcam streaming
+#define PTP_CHDK_WEBCAM_ZOOM    0x4  // Zoom: param2 = signed delta (+1 in, -1 out)
 
 // message types
 enum ptp_chdk_script_msg_type {

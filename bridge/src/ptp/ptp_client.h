@@ -42,6 +42,7 @@ enum ChdkCommand : uint32_t {
 // Webcam streaming flags
 constexpr uint32_t WEBCAM_START = 0x1;
 constexpr uint32_t WEBCAM_STOP  = 0x2;
+constexpr uint32_t WEBCAM_ZOOM  = 0x4;
 
 // PTP container (command/response)
 struct PTPContainer {
@@ -118,6 +119,9 @@ public:
     // Get a single MJPEG frame from camera
     // Returns true if frame received, false on error/no frame
     bool get_frame(MJPEGFrame& frame);
+
+    // Zoom: send delta via webcam PTP opcode (no session conflict)
+    bool zoom(int delta);
 
     // Execute a Lua script on camera
     bool execute_script(const std::string& script);

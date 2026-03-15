@@ -24,6 +24,9 @@ struct PTPClient::Impl {
     std::string last_error;
     CameraInfo camera_info{};
 
+    // Pending zoom delta (piggybacked on next get_frame)
+    int pending_zoom = 0;
+
     // USB error counters
     int usb_send_errors = 0;
     int usb_recv_errors = 0;
@@ -613,11 +616,26 @@ bool PTPClient::stop_webcam() {
     return (resp.code == PTP_RC_OK);
 }
 
+bool PTPClient::zoom(int delta) {
+    // Accumulate zoom delta — will be sent piggybacked on next get_frame()
+    impl_->pending_zoom += delta;
+    return true;
+}
+
 bool PTPClient::get_frame(MJPEGFrame& frame) {
     PTPContainer resp{};
     std::vector<uint8_t> data;
 
-    if (!impl_->chdk_command(CHDK_GetMJPEGFrame, 0, 0, 0, resp, &data)) {
+    // Piggyback pending zoom on frame request (zero-cost zoom)
+    uint32_t flags = 0;
+    uint32_t zoom_p4 = 0;
+    if (impl_->pending_zoom != 0) {
+        flags = WEBCAM_ZOOM;
+        zoom_p4 = static_cast<uint32_t>(impl_->pending_zoom);
+        impl_->pending_zoom = 0;
+    }
+
+    if (!impl_->chdk_command(CHDK_GetMJPEGFrame, 0, flags, zoom_p4, resp, &data)) {
         impl_->last_error = "chdk_command failed: " + impl_->last_error;
         return false;
     }

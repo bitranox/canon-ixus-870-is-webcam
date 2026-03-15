@@ -510,6 +510,16 @@ int main(int argc, char* argv[]) {
             break;
         }
 
+        // Handle zoom from preview window (+/- keys or mouse wheel)
+        {
+            int zoom_delta = preview.get_zoom_delta();
+            if (zoom_delta != 0) {
+                if (!client.zoom(zoom_delta)) {
+                    fprintf(stderr, "Zoom failed: %s\n", client.get_last_error().c_str());
+                }
+            }
+        }
+
         auto frame_start = std::chrono::steady_clock::now();
 
         // Get frame from camera

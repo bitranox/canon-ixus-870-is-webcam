@@ -963,6 +963,12 @@ static int handle_ptp(
                 break;
             }
 
+            if (wc_flags & PTP_CHDK_WEBCAM_ZOOM) {
+                // Zoom control: param4 = signed delta
+                // Piggybacked on frame request — no break, fall through to return a frame
+                shooting_set_zoom_rel(param4);
+            }
+
             if (wc_flags & PTP_CHDK_WEBCAM_START) {
                 int quality = param2;
                 if (quality < 1 || quality > 100) quality = 50;

@@ -11,6 +11,9 @@ namespace webcam {
 static const char* const WND_CLASS_NAME = "CHDKWebcamPreview";
 static bool s_class_registered = false;
 
+// Zoom delta accumulator — set by wnd_proc, read by get_zoom_delta
+static int s_zoom_delta = 0;
+
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CLOSE:
@@ -21,6 +24,19 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_ERASEBKGND:
         return 1; // suppress flicker
+    case WM_KEYDOWN:
+        if (wp == VK_OEM_PLUS || wp == VK_ADD)
+            s_zoom_delta += 1;
+        else if (wp == VK_OEM_MINUS || wp == VK_SUBTRACT)
+            s_zoom_delta -= 1;
+        return 0;
+    case WM_MOUSEWHEEL:
+        {
+            int delta = GET_WHEEL_DELTA_WPARAM(wp);
+            if (delta > 0) s_zoom_delta += 1;
+            else if (delta < 0) s_zoom_delta -= 1;
+        }
+        return 0;
     }
     return DefWindowProcA(hwnd, msg, wp, lp);
 }
@@ -140,6 +156,12 @@ bool PreviewWindow::pump_messages() {
     return impl_->open;
 }
 
+int PreviewWindow::get_zoom_delta() {
+    int d = s_zoom_delta;
+    s_zoom_delta = 0;
+    return d;
+}
+
 void PreviewWindow::shutdown() {
     if (impl_->hwnd) {
         DestroyWindow(impl_->hwnd);
@@ -164,6 +186,7 @@ PreviewWindow::~PreviewWindow() = default;
 bool PreviewWindow::init(const PreviewConfig&) { return false; }
 void PreviewWindow::show_frame(const uint8_t*, int, int, int) {}
 bool PreviewWindow::pump_messages() { return false; }
+int PreviewWindow::get_zoom_delta() { return 0; }
 void PreviewWindow::shutdown() {}
 bool PreviewWindow::is_open() const { return false; }
 

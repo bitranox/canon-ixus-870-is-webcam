@@ -27,6 +27,11 @@ public:
     // Returns false if the window was closed.
     bool pump_messages();
 
+    // Get pending zoom delta from keyboard/mouse wheel input.
+    // Returns +1 for zoom in, -1 for zoom out, 0 for no change.
+    // Resets after reading.
+    int get_zoom_delta();
+
     // Close the window.
     void shutdown();
 
