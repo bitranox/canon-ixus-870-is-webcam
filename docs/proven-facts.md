@@ -1,6 +1,6 @@
 # Proven Facts — Canon IXUS 870 IS Webcam Project
 
-Last updated: 2026-03-15
+Last updated: 2026-03-16
 
 This document contains ONLY verified, tested facts. No speculation, no history.
 Each fact includes the evidence that proved it.
@@ -261,7 +261,7 @@ task_MovWrite (0xFF92F1EC)
 webcam.c (CHDK module)
     │ polls dual-slot seqlock (100 × msleep(10))
     │ peeks AVCC headers from camera RAM to determine exact frame size
-    │ zero-copy: passes ring buffer pointer directly to PTP (no memcpy)
+    │ memcpy to 128KB static BSS buffer + post-copy seqlock verification
     │ returns single H.264 frame per PTP response
     ▼
 PTP USB transfer → bridge → FFmpeg decode → virtual webcam
@@ -271,15 +271,15 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 
 | Metric | Value | Evidence |
 |--------|-------|----------|
-| Frames produced | ~1859 in 60s (~31 fps) | v34 bridge output (60s session) |
-| Frames received | 1798/1859 (96.7% capture) | v34: zero-copy dual-slot seqlock + AVCC peek |
-| Frames decoded | 1784/1798 (99.2%) | v34: 14 initial P-frames before first IDR |
-| Decoded FPS | 30.0 fps | v34: matches camera output rate |
-| IDR keyframes | ~120 in 60s (~2/sec, GOP ~15) | v34 bridge output |
+| Frames produced | 1796 in 60s (30.2 fps) | v35c bridge output (60s session) |
+| Frames received | 1796/1796 (100% capture) | v35c: memcpy + seqlock verify, no debug frames |
+| Frames decoded | 1782/1796 (99.2%) | v35c: 14 initial P-frames before first IDR |
+| Decoded FPS | 29.9 fps | v35c: matches camera output rate |
+| IDR keyframes | ~120 in 60s (~2/sec, GOP ~11) | v35c bridge output |
 | SD card writes | 0 bytes | No MOV file created (drain mode suppresses file creation) |
-| Max decode streak | 1784 (cam#16-cam#1859) | v34: perfect after first natural IDR |
-| Heap allocation | 0 bytes (static 512B debug buf) | v34: zero-copy, no malloc |
-| PTP RTT | min=3.2ms avg=16.4ms max=59.7ms | v34 bridge output |
+| Max decode streak | 1782 (cam#15-cam#1796) | v35c: entire session after first IDR |
+| Heap allocation | 0 bytes (128KB static BSS buf) | v35c: no malloc |
+| PTP RTT | min=9.2ms avg=28.7ms max=110.4ms | v35c bridge output |
 
 ### 17. Original TakeSemaphore timeout (1000ms) is correct for webcam
 
@@ -386,15 +386,13 @@ With yield restored: stable operation, correct frame sizes.
 
 **Implication**: The current PTP bridge approach (custom opcode 0x9999, bulk transfer) is the correct and only practical architecture for webcam streaming on this camera. Native UVC would require ROM patching, custom ISO driver for undocumented hardware, and runtime endpoint reconfiguration — all without any firmware reference implementation.
 
-### 27. Zero-copy frame delivery is safe and stable
+### 27. memcpy + post-copy seqlock verification is required (zero-copy has torn reads)
 
-**Evidence**: v34 passes ring buffer pointers directly to PTP (no memcpy). 60s test: 99.2% decode, 30.0fps, 0 USB errors, 1784-frame max streak, no artifacts. The ring buffer data is stable because:
-1. MovieFrameGetter returns completed frames (encode is finished)
-2. The ring buffer has 256KB slots — recycling takes many frames
-3. PTP USB DMA reads from cached RAM (same as memcpy source was)
-4. The seqlock tear check (`s[2] != seq`) guards against mid-read overwrites
+**Evidence**: v34 zero-copy (passing ring buffer pointers directly to PTP) showed visual artifacts during zoom and scene changes. USB DMA transfer takes 10-20ms, during which the encoder can recycle the ring buffer slot. The seqlock only updates AFTER the encoder finishes the new frame, so DMA corruption during encoding is undetectable.
 
-**Implication**: memcpy in the consumer was always redundant. Zero-copy saves ~40KB of memcpy per frame (1.2MB/s) and eliminates the 64KB heap allocation entirely. The 512-byte static buffer for debug frames is the only remaining buffer.
+v35b switched to memcpy into a 128KB static BSS buffer with post-copy seqlock verification (`if (s[2] != seq) continue`). The memcpy window is ~60μs (vs 10-20ms for USB DMA) — far less vulnerable. With this approach: 0 len_overflow, 0 AVCC validation failures, visual artifacts reduced to ~1 per 60s during aggressive zoom.
+
+**Implication**: Zero-copy is NOT safe despite the seqlock — USB DMA is too slow. memcpy + post-copy seqlock check is the correct approach. The 128KB static BSS buffer has no heap impact (not malloc'd).
 
 ### 28. IDR injection is unnecessary
 
@@ -427,6 +425,29 @@ When `ring_buf+0x88 == 1`, task_MovWrite enters "drain mode" — it receives mes
 - Set +0x50 to empty string: FUN_ff823fd4("") crashes parsing empty path
 
 **Implication**: Drain mode is the correct and only way to suppress MOV file creation without breaking the recording pipeline. It uses the firmware's own cancel mechanism rather than trying to selectively skip file creation within FUN_ff9309e4.
+
+### 30. Debug frames cause systematic H.264 decoder artifacts
+
+**Evidence**: Frame dump analysis of 30s session revealed exactly 30 frame-number gaps, each exactly 1 frame, at perfectly regular ~30-frame intervals:
+```
+GAP: 30 -> 32 (missed 1)
+GAP: 61 -> 63 (missed 1)
+...
+GAP: 924 -> 926 (missed 1)
+```
+Each gap aligns with `(nal_frame_count % 30) == 1` — the debug frame interval in spy_ring_write.
+
+**Mechanism**: Debug frames take priority over H.264 frames in `capture_frame_h264()`. When a debug frame is queued, the PTP response returns the debug frame instead of an H.264 frame. The bridge wastes one PTP round-trip, and the H.264 frame produced during that time is never received. The FFmpeg decoder then uses stale reference data for subsequent P-frames → visual artifacts persisting until the next IDR.
+
+**Fix**: Removed all debug frame generation from spy_ring_write. Result: 0 skipped frames (cam#1796 = 1796 unique received), artifacts reduced from ~30/30s to ~1/60s.
+
+**Implication**: Debug frames must never be sent during normal streaming. If diagnostics are needed in the future, they should be sent out-of-band (separate PTP opcode) or at a very low frequency (e.g., every 3000 frames = once per 100s).
+
+### 31. hdr[10..11] MUST NOT be written (extends forbidden zone beyond hdr[7..9])
+
+**Evidence**: Attempted to store frame tail words at hdr[10] and hdr[11] for torn-read detection. Result: 0 frames received, all USB I/O errors from start — camera crashed immediately.
+
+**Implication**: The forbidden zone at 0xFF000 extends at least to hdr[11] (offset 0x2C). Only hdr[0..6] and hdr[12..13] (debug queue indices) are safe for writing.
 
 ## What Needs to Happen Next
 

@@ -166,18 +166,10 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
     if (hdr[0] == 0x52455753) {
         spy_cache_invalidate(ptr, size);
 
-        // Report NAL type to bridge via debug frame (every 30th frame)
-        {
-            static unsigned int nal_frame_count = 0;
-            nal_frame_count++;
-            if ((nal_frame_count % 30) == 1 && size >= 5) {
-                spy_debug_reset();
-                spy_debug_add('N','A','L','T', ptr[4]);        // NAL byte (type in low 5 bits)
-                spy_debug_add('F','S','I','Z', size);          // frame size
-                spy_debug_add('F','N','U','M', nal_frame_count); // frame number
-                spy_debug_send();
-            }
-        }
+        // Debug frames disabled: each debug frame causes the bridge to miss
+        // one H.264 frame (debug takes priority in PTP response), producing
+        // a decoder artifact. NAL type info is available from the bridge's
+        // own AVCC parsing.
 
         // Prevent SD card writes: clear task_MovWrite's is_open flag.
         // 0x89E8 = ring buffer struct (0x8968) + 0x80.
@@ -191,26 +183,6 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
         // messages reach the consumed-pointer update path (writes still skip
         // because +0x80=0 above).
         *(volatile unsigned int *)0x89F0 = 0;
-
-        // Stall detection: report inter-call gaps > 50ms via debug frame.
-        // Helps identify what's blocking movie_record_task during clustered drops.
-        {
-            static unsigned int last_tick = 0;
-            long (*fw_get_tick)(void) = (long (*)(void))0x3223EC;
-            unsigned int now = (unsigned int)fw_get_tick();
-            if (last_tick != 0) {
-                unsigned int delta = now - last_tick;
-                // get_tick_count returns milliseconds. Report gaps > 50ms.
-                if (delta > 50) {
-                    spy_debug_reset();
-                    spy_debug_add('G','A','P','!', delta);     // gap in milliseconds
-                    spy_debug_add('N','O','W','T', now);       // current tick (ms)
-                    spy_debug_add('L','S','T','T', last_tick); // last tick (ms)
-                    spy_debug_send();
-                }
-            }
-            last_tick = now;
-        }
 
         // Determine actual H.264 frame size from AVCC length prefix.
         // MovieFrameGetter returns the 256KB chunk size, not encoded size.

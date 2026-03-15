@@ -278,8 +278,8 @@ int main(int argc, char* argv[]) {
 #endif
 
     printf("CHDK Webcam Bridge v1.0\n");
-    printf("Output: %dx%d @ %d FPS, JPEG quality: %d\n\n",
-           opts.output_width, opts.output_height, opts.target_fps, opts.jpeg_quality);
+    printf("Output: %dx%d @ %d FPS\n\n",
+           opts.output_width, opts.output_height, opts.target_fps);
 
     // --- Connect to camera ---
     printf("Connecting to camera...\n");
@@ -419,8 +419,8 @@ int main(int argc, char* argv[]) {
     if (!opts.no_preview) {
         printf("Opening preview window...\n");
         webcam::PreviewConfig pvc;
-        pvc.width = 640;
-        pvc.height = 480;
+        pvc.width = opts.output_width;
+        pvc.height = opts.output_height;
         pvc.title = "CHDK Webcam Preview";
         if (!preview.init(pvc)) {
             fprintf(stderr, "WARNING: Preview window failed to open.\n");
@@ -1147,8 +1147,8 @@ int main(int argc, char* argv[]) {
             last_stats = now;
         }
 
-        // No frame rate limiter — camera-side TakeSemaphore paces at 30fps.
-        // Adding sleep here would only cause frame loss.
+        // No frame rate limiter — bridge polls as fast as PTP round-trip allows.
+        // Camera-side msleep(10) provides the only pacing.
     }
 
     // --- Cleanup ---

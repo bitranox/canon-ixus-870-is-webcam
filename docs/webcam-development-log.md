@@ -3579,3 +3579,78 @@ After fixing both issues: 10s, 286 decoded, 29.9 FPS, 0 USB errors, 95.3% decode
 - `chdk/modules/webcam.c` — removed 6 zero-assignments in webcam_get_status
 - `chdk/core/ptp.c` — removed reads of deleted fields (crash fix)
 - `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — cleaned up spy_take_sem_short comment
+
+---
+
+## v35c — Debug Frame Artifact Fix + Bridge Cleanup (2026-03-16)
+
+### Root cause: debug frames cause H.264 decoder artifacts
+
+Frame dump analysis revealed **perfectly regular 1-frame gaps every ~30 frames** (30 gaps in 30 seconds). Each gap corresponds to a debug frame sent by `spy_ring_write` every 30th H.264 frame.
+
+The mechanism: debug frames take priority over H.264 frames in `capture_frame_h264()` (webcam.c lines 106-132). When a debug frame is queued, the PTP response returns the debug frame instead of an H.264 frame. The bridge "wastes" one PTP round-trip on the debug frame, and the H.264 frame produced during that round-trip is never received.
+
+Each missed H.264 frame causes the FFmpeg decoder to use a stale reference for subsequent P-frames, producing visual artifacts that persist until the next IDR (~11 frames later).
+
+### Frame dump evidence
+
+```
+GAP: 30 -> 32 (missed 1)
+GAP: 61 -> 63 (missed 1)
+GAP: 91 -> 93 (missed 1)
+...
+GAP: 924 -> 926 (missed 1)
+Total: 895, range: 2-926, missing: 30
+```
+
+Every gap aligns with `(nal_frame_count % 30) == 1` — the debug frame interval in movie_rec.c.
+
+### Fix
+
+Removed all debug frame generation from `spy_ring_write` in movie_rec.c:
+1. **NAL type reporting** (every 30th frame) — removed. Bridge has its own AVCC parsing.
+2. **Stall detection** (gap > 50ms) — removed. No stalls observed in 60s recordings (proven fact #20).
+
+The debug frame infrastructure (spy_debug_reset/add/send, SPSC queue at 0xFF040) remains in movie_rec.c for future diagnostic use — only the callers were removed.
+
+### Other changes
+
+1. **Bridge frame rate limiter removed** — was testing 10/25/30ms limiters; no limiter gives best results since camera-side msleep(10) provides pacing.
+2. **Bridge preview window** now matches output resolution (was hardcoded 640x480, now uses `opts.output_width` × `opts.output_height`).
+3. **Removed misleading "JPEG quality" from bridge startup output** — irrelevant for H.264 pipeline.
+4. **AVCC sanitizer in h264_decoder.cpp** changed from silent clamping to frame rejection — if NAL length exceeds packet size, frame is rejected instead of truncated. (Never triggered in testing — camera data is structurally valid.)
+5. **memcpy + post-copy seqlock verification** retained from v35b — protects against torn reads during the ~60μs memcpy window. Zero-copy was vulnerable during the 10-20ms USB DMA transfer.
+
+### Test results (no debug frames, no limiter, 1280x720 preview)
+
+```
+=== SESSION SUMMARY ===
+  Received: 1782 frames
+  Dropped:  14 (decode failures — all startup "needs more data")
+  Skipped:  0
+  Unique data: 1796 frames
+  Last cam frame#: 1796    ← matches unique data: ZERO skipped frames
+  Duration: 59.5 seconds
+  Decoded FPS: 29.9
+  Max streak: 1782 (cam#15-cam#1796) — entire session after startup
+  USB errors: 0
+```
+
+100% frame delivery (1796/1796), 100% decode after startup, 29.9 FPS, max streak = entire session.
+
+One very rare artifact observed during aggressive zoom (~1 per 60s). Likely a ring buffer torn read where pixel data is corrupted but H.264 syntax remains valid, passing both AVCC validation and FFmpeg decode. Under investigation.
+
+### Limiter comparison (all with memcpy + post-copy seqlock, 60s runs)
+
+| Limiter | Decode% | FPS | Drops (startup) | Skipped | Notes |
+|---------|---------|-----|-----------------|---------|-------|
+| None | 99.2% | 29.9 | 14 | 0 | Best — all drops are startup |
+| 10ms | 99.2% | 29.7 | 14 | 0 | Same as none (RTT > 10ms) |
+| 25ms | 98.5% | 29.7 | 27 | 0 | More startup drops |
+| 30ms | 95.4% | 28.5 | 79 | 0 | Too slow — misses frames |
+
+### Files changed
+
+- `chdk/platform/ixus870_sd880/sub/101a/movie_rec.c` — removed debug frame generation (NAL reporting + stall detection)
+- `bridge/src/main.cpp` — removed frame rate limiter, preview window matches output resolution, removed "JPEG quality" from output
+- `bridge/src/webcam/h264_decoder.cpp` — AVCC sanitizer rejects instead of clamps

@@ -162,9 +162,14 @@ bool H264Decoder::decode(const uint8_t* data, size_t size, RGBFrame& rgb_out) {
 
                 uint32_t remaining = (uint32_t)(size - pos - 4);
 
-                // Clamp NAL length to available data
-                if (nal_len > remaining)
-                    nal_len = remaining;
+                // Reject frame if NAL length exceeds available data
+                // (indicates ring buffer corruption / torn read)
+                if (nal_len > remaining) {
+                    fprintf(stderr, "H264: AVCC NAL length %u exceeds remaining %u — rejecting frame\n",
+                            nal_len, remaining);
+                    impl_->last_error = "AVCC NAL length mismatch (torn read)";
+                    return false;
+                }
 
                 // Skip obviously invalid NALs (empty or no valid header)
                 if (nal_len < 1) break;

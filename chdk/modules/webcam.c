@@ -7,8 +7,8 @@
 // encoded frame.  spy_ring_write invalidates the CPU data cache for the
 // frame data (JPCORE DMA bypasses cache), stores {ptr, size} via seqlock
 // at 0xFF000.  capture_frame_h264() polls the seqlock with msleep(10)
-// to yield the CPU to DryOS, then passes the ring buffer pointer
-// directly to PTP (zero-copy — no memcpy needed).
+// to yield the CPU to DryOS, then memcpy's the frame data to a local
+// buffer with post-copy seqlock verification to detect torn reads.
 //
 #include "camera_info.h"
 #include "shooting.h"
@@ -50,8 +50,14 @@ static unsigned int hw_jpeg_size = 0;
 static int recording_active = 0;
 static int webcam_stop(void);              // forward declaration for use in webcam_start
 
-// Small static buffer for debug frames only (H.264 frames use zero-copy)
+// Small static buffer for debug frames only
 static unsigned char debug_frame_buf[512];
+
+// Frame copy buffer — memcpy from ring buffer before passing to PTP.
+// 128KB static BSS (not heap malloc — safe from DryOS heap exhaustion).
+// Actual H.264 frames are typically 5-40KB but can exceed 64KB during zoom.
+#define FRAME_BUF_SIZE 131072
+static unsigned char frame_data_buf[FRAME_BUF_SIZE];
 
 
 // ============================================================
@@ -125,11 +131,12 @@ static int capture_frame_h264(void)
         }
     }
 
-    // Zero-copy seqlock read: pass ring buffer pointer directly to PTP.
-    // Ring buffer data is stable — MovieFrameGetter returns completed frames,
-    // and the ring buffer is large enough that freed slots aren't recycled
-    // within our read window (same mechanism the SD writer uses).
-    // msleep(10) for polling only — USB DMA provides natural CPU yielding.
+    // Seqlock read with memcpy + post-copy verification.
+    // After AVCC peek validates the frame, memcpy to local buffer, then
+    // re-check seqlock. If seqlock changed during copy, the ring buffer
+    // slot was recycled — discard and retry. This eliminates the long
+    // USB DMA window where zero-copy was vulnerable to overwrites.
+    // msleep(10) for polling only — yields CPU to DryOS scheduler.
     {
         int polls;
 
@@ -162,41 +169,51 @@ static int capture_frame_h264(void)
                     s = hdr + 4; seq = seq_b;
                 }
 
-                src = (unsigned char *)s[0];
-                sz = s[1];
-                if (!src || sz == 0) continue;
-                if (sz > 120000) sz = 120000;
-
-                // AVCC peek: determine exact frame size from NAL lengths
+                // Read frame pointer and size, AVCC parse, memcpy, verify.
                 {
-                    unsigned int pos = 0, total = 0;
-                    int nal_count = 0, have_vcl = 0;
-                    while (pos + 5 <= sz && nal_count < 8) {
-                        unsigned int nal_len = ((unsigned int)src[pos] << 24) |
-                                              ((unsigned int)src[pos+1] << 16) |
-                                              ((unsigned int)src[pos+2] << 8) |
-                                              (unsigned int)src[pos+3];
-                        unsigned int nal_type;
-                        if (nal_len < 2 || nal_len > 120000) break;
-                        nal_type = src[pos + 4] & 0x1F;
-                        if (src[pos + 4] & 0x80) break;
-                        total = pos + 4 + nal_len;
-                        pos = total;
-                        nal_count++;
-                        if (nal_type == 1 || nal_type == 5) { have_vcl = 1; break; }
-                    }
-                    if (!have_vcl || total == 0 || total > sz) continue;
-                    copy_sz = total;
-                }
+                    src = (unsigned char *)s[0];
+                    sz = s[1];
+                    if (!src || sz == 0) { msleep(10); continue; }
+                    if (sz > 120000) sz = 120000;
 
-                // Verify seqlock wasn't torn during AVCC peek
-                if (s[2] != seq) continue;
+                    // AVCC peek: determine exact frame size from NAL lengths
+                    {
+                        unsigned int pos = 0, total = 0;
+                        int nal_count = 0, have_vcl = 0;
+                        while (pos + 5 <= sz && nal_count < 8) {
+                            unsigned int nal_len = ((unsigned int)src[pos] << 24) |
+                                                  ((unsigned int)src[pos+1] << 16) |
+                                                  ((unsigned int)src[pos+2] << 8) |
+                                                  (unsigned int)src[pos+3];
+                            unsigned int nal_type;
+                            if (nal_len < 2 || nal_len > 120000) break;
+                            nal_type = src[pos + 4] & 0x1F;
+                            if (src[pos + 4] & 0x80) break;
+                            total = pos + 4 + nal_len;
+                            pos = total;
+                            nal_count++;
+                            if (nal_type == 1 || nal_type == 5) { have_vcl = 1; break; }
+                        }
+                        if (!have_vcl || total == 0 || total > sz) {
+                            msleep(10);
+                            continue;  // AVCC parse failed — skip frame
+                        }
+                        copy_sz = total;
+                    }
+
+                    // Copy frame data to local buffer
+                    if (copy_sz > FRAME_BUF_SIZE) copy_sz = FRAME_BUF_SIZE;
+                    memcpy(frame_data_buf, src, copy_sz);
+
+                    // Post-copy seqlock verify — if producer published a new
+                    // frame to this slot during memcpy, data is torn → skip
+                    if (s[2] != seq) continue;
+                }
 
                 if (s == hdr + 1) last_seq_a = seq_a;
                 else last_seq_b = seq_b;
 
-                // Zero-copy: pass ring buffer pointer directly
-                hw_jpeg_data = src;
+                hw_jpeg_data = frame_data_buf;
                 hw_jpeg_size = copy_sz;
                 frame_width = 640;
                 frame_height = 480;
