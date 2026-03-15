@@ -3696,3 +3696,105 @@ The memcpy + post-copy seqlock verification was unnecessary overhead. The 128KB 
 ### Files changed
 
 - `chdk/modules/webcam.c` — reverted to zero-copy (removed memcpy, post-copy verify, 128KB buffer)
+
+---
+
+## v35e — Zoom Control from Preview Window (2026-03-16)
+
+### Goal
+Allow zoom in/out from the PC-side preview window using keyboard (+/-) and mouse wheel.
+
+### Implementation
+
+**Preview window input** (`preview_window.cpp`):
+- `WM_KEYDOWN`: +/= or numpad + → zoom in, -/_ or numpad - → zoom out
+- `WM_MOUSEWHEEL`: scroll up → zoom in, scroll down → zoom out
+- `get_zoom_delta()`: returns accumulated delta, resets to 0
+
+**Bridge PTP client** (`ptp_client.cpp`):
+- `zoom(int delta)` accumulates pending delta in `impl_->pending_zoom`
+- `get_frame()` piggybacks the delta on the frame request: adds `WEBCAM_ZOOM` flag to param3, delta in param4
+- Zero-cost: zoom is carried on the same PTP transaction as frame retrieval
+
+**Camera PTP handler** (`ptp.c`):
+- `WEBCAM_ZOOM` flag (0x4) in param3 of `PTP_CHDK_GetMJPEGFrame`
+- Falls through to normal frame retrieval (no break — returns a frame AND processes zoom)
+
+**Protocol**: param3 = flags (bitmask), param4 = signed zoom delta when WEBCAM_ZOOM set.
+
+### Iteration 1: execute_script (FAILED)
+
+Used `client.execute_script("set_zoom_rel(1)")` — different PTP opcode caused USB timeout crash after 2 seconds. The Lua execute_script opcode conflicts with the webcam streaming session.
+
+### Iteration 2: Separate zoom PTP transaction (artifacts)
+
+Added `WEBCAM_ZOOM` flag to the existing `CHDK_GetMJPEGFrame` opcode. Zoom returned an empty response (`break` after zoom) — each zoom cost one PTP round-trip with no frame. Test: zoom worked but 66/662 decode failures (10%), 20.2 FPS. Artifacts during zoom.
+
+### Iteration 3: Piggybacked zoom, synchronous (artifacts)
+
+Changed zoom to fall through to frame retrieval instead of breaking. Piggybacked on get_frame param3/param4. But `shooting_set_zoom_rel()` called synchronously in PTP handler — `lens_set_zoom_point()` blocks while zoom motor moves. PTP handler blocked → bridge can't get frames → missed frames → artifacts.
+
+Bug found: used `ptp.param4` (response struct) instead of `param4` (function argument) — zoom had no effect in first test.
+
+### Iteration 4: Deferred zoom in webcam polling loop (artifacts)
+
+Moved zoom execution to webcam.c's `capture_frame_h264()` idle polling loop via spy[14]. Zoom happened during msleep(10) idle time. Build failed initially (linker: `webcam_pending_zoom` undefined in core firmware — can't reference module symbol from core). Fixed by using spy buffer spy[14] for cross-boundary communication.
+
+Test: 37/777 decode failures (4.8%), 25.0 FPS. Still artifacts because zoom blocking still happens inside `capture_frame_h264()`, which is called from the PTP handler. The PTP response is delayed during motor movement.
+
+### Iteration 5: Async DryOS task (PERFECT — zero artifacts)
+
+**Key user insight**: "if I do that manually on the cam, no fragments" — manual zoom works because the camera's own control task handles it while PTP keeps serving frames uninterrupted. Our zoom blocked the PTP handler in all previous approaches.
+
+**Fix**: Spawn a one-shot DryOS task (`CreateTask`) for zoom:
+```c
+// ptp.c — async zoom task
+static volatile int zoom_task_delta = 0;
+static void zoom_task_entry(void) {
+    shooting_set_zoom_rel(zoom_task_delta);
+    ExitTask();
+}
+
+// In WEBCAM_ZOOM handler:
+zoom_task_delta = param4;
+CreateTask("ZoomTask", 0x19, 0x800, zoom_task_entry);
+```
+
+The zoom motor runs in a separate DryOS task. The PTP handler returns immediately with a frame. Frame retrieval is never blocked by zoom.
+
+### Test Results (v35e final — async zoom)
+
+```
+=== SESSION SUMMARY ===
+  Received: 885 frames
+  Dropped:  14 (decode failures)
+  Skipped:  0
+  Unique data: 899 frames
+  Duration: 29.5 seconds
+  Decoded FPS: 30.0
+  Total FPS: 30.4
+  Camera produced: ~899 frames
+=======================
+```
+
+User confirmed: **zero artifacts** during aggressive zoom in/out. 14 drops are the normal startup P-frames before first IDR.
+
+### Zoom iteration summary
+
+| Approach | Decode failures | FPS | Artifacts |
+|----------|----------------|-----|-----------|
+| execute_script | crash after 2s | — | — |
+| Separate PTP transaction | 66/662 (10%) | 20.2 | Yes |
+| Piggybacked synchronous | 37/777 (4.8%) | 25.0 | Yes |
+| Deferred in polling loop | 37/777 (4.8%) | 25.0 | Yes |
+| **Async DryOS task** | **14/899 (1.6%)** | **30.0** | **None** |
+
+### Files changed
+
+- `bridge/src/webcam/preview_window.cpp` — WM_KEYDOWN, WM_MOUSEWHEEL handlers + `get_zoom_delta()`
+- `bridge/src/webcam/preview_window.h` — `get_zoom_delta()` declaration
+- `bridge/src/ptp/ptp_client.cpp` — `zoom()` stores pending delta, `get_frame()` piggybacks
+- `bridge/src/ptp/ptp_client.h` — `WEBCAM_ZOOM` flag, `zoom()` declaration
+- `bridge/src/main.cpp` — zoom delta handling in main loop
+- `chdk/core/ptp.c` — async zoom task via CreateTask
+- `chdk/core/ptp.h` — `PTP_CHDK_WEBCAM_ZOOM` flag

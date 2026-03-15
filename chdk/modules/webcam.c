@@ -78,6 +78,7 @@ static unsigned char frame_data_buf[FRAME_BUF_SIZE];
 // spy[6]  = slot_b_seq (sequence counter: odd=writing, even=stable, slot B)
 // spy[12] = dbg_wr     (debug queue write index)
 // spy[13] = dbg_rd     (debug queue read index)
+// spy[14] = (reserved)
 
 // Dual-slot seqlock tracking (module-level for persistence across capture calls)
 static unsigned int last_seq_a = 0;    // last seen slot A sequence

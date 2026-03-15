@@ -275,6 +275,7 @@ PTP USB transfer → bridge → FFmpeg decode → virtual webcam
 | Frames received | 1799/1799 (100% capture) | v35d: zero-copy, no debug frames |
 | Frames decoded | 1785/1799 (99.2%) | v35d: 14 initial P-frames before first IDR |
 | Decoded FPS | 30.0 fps | v35d: matches camera output rate |
+| Zoom during streaming | Zero artifacts, 30.0 FPS | v35e: async DryOS task, piggybacked on frame request |
 | IDR keyframes | ~120 in 60s (~2/sec, GOP ~11) | v35d bridge output |
 | SD card writes | 0 bytes | No MOV file created (drain mode suppresses file creation) |
 | Max decode streak | 1785 (cam#15-cam#1799) | v35d: entire session after first IDR |
@@ -454,6 +455,21 @@ Each gap aligns with `(nal_frame_count % 30) == 1` — the debug frame interval 
 **Evidence**: Attempted to store frame tail words at hdr[10] and hdr[11] for torn-read detection. Result: 0 frames received, all USB I/O errors from start — camera crashed immediately.
 
 **Implication**: The forbidden zone at 0xFF000 extends at least to hdr[11] (offset 0x2C). Only hdr[0..6] and hdr[12..13] (debug queue indices) are safe for writing.
+
+### 32. Zoom must run in a separate DryOS task (not PTP handler context)
+
+**Evidence**: Five zoom implementations tested in v35e:
+1. `execute_script("set_zoom_rel(1)")` → crash after 2s (opcode conflict)
+2. Separate PTP transaction (zoom returns empty) → 10% decode failures, artifacts
+3. Piggybacked synchronous `shooting_set_zoom_rel()` in PTP handler → 4.8% failures, artifacts
+4. Deferred to webcam polling loop (spy[14]) → 4.8% failures, artifacts
+5. **Async DryOS task** (`CreateTask("ZoomTask", 0x19, 0x800, ...)`) → **1.6% failures, zero artifacts**
+
+**Key insight** (user observation): Manual zoom on camera has zero artifacts because the camera's control task handles zoom while PTP handler continues serving frames. All approaches 1-4 blocked the PTP handler during `lens_set_zoom_point()` motor movement (~100-300ms), preventing frame retrieval during that window.
+
+**Implementation**: PTP handler stores zoom delta in static variable, spawns one-shot DryOS task that calls `shooting_set_zoom_rel()` and exits. PTP handler returns immediately with a frame. Zoom motor runs concurrently.
+
+**Implication**: Any long-running camera operation (zoom, focus, exposure) triggered from PTP must run in a separate task to avoid blocking frame retrieval.
 
 ## What Needs to Happen Next
 

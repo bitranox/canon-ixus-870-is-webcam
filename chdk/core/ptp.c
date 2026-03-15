@@ -441,6 +441,14 @@ static long script_start_ptp( char *script )
     return ptp_script_state;
 }
 
+// Async zoom — runs in a separate DryOS task so PTP handler stays free
+extern void shooting_set_zoom_rel(int v);
+static volatile int zoom_task_delta = 0;
+static void zoom_task_entry(void) {
+    shooting_set_zoom_rel(zoom_task_delta);
+    ExitTask();
+}
+
 static int handle_ptp(
                __attribute__ ((unused))int h, ptp_data *data, __attribute__ ((unused))int opcode, int sess_id, int trans_id,
                int param1, int param2, int param3, int param4, __attribute__ ((unused))int param5)
@@ -964,9 +972,9 @@ static int handle_ptp(
             }
 
             if (wc_flags & PTP_CHDK_WEBCAM_ZOOM) {
-                // Zoom control: param4 = signed delta
-                // Piggybacked on frame request — no break, fall through to return a frame
-                shooting_set_zoom_rel(param4);
+                // Async zoom: spawn DryOS task so PTP handler stays free
+                zoom_task_delta = param4;
+                CreateTask("ZoomTask", 0x19, 0x800, zoom_task_entry);
             }
 
             if (wc_flags & PTP_CHDK_WEBCAM_START) {
