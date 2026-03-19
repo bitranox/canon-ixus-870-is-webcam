@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake --version:*)",
+      "Bash(where:*)",
+      "Bash(ls:*)",
+      "Bash(CMAKE=\"C:/Program Files \\(x86\\)/Microsoft Visual Studio/2019/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\":*)",
+      "Bash(\"$CMAKE\" --version)",
+      "Bash(git clone:*)",
+      "Bash(C:/vcpkg/bootstrap-vcpkg.bat)",
+      "Bash(\"C:/Program Files \\(x86\\)/Microsoft Visual Studio/2019/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe\" --build \"C:/projects/chdk-webcam/build\" --config Release)",
+      "Bash(cmake --build:*)",
+      "Bash(cmd.exe /c \"cmake --build C:\\\\projects\\\\chdk-webcam\\\\build --config Release\")",
+      "Bash(powershell.exe:*)",
+      "Bash(docker images:*)",
+      "Bash(docker run:*)",
+      "Bash(dir:*)"
+    ]
+  }
+}
