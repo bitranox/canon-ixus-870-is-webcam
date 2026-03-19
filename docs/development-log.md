@@ -1,6 +1,6 @@
 # Webcam Development Log
 
-> Back to [CLAUDE.md](../CLAUDE.md)
+> Back to [README](../README.md)
 
 ## Native Webcam Project (Phase 1: MJPEG Streaming)
 

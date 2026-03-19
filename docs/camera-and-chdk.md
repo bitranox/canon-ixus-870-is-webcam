@@ -1,31 +1,12 @@
 # Camera & CHDK Reference
 
-> Back to [CLAUDE.md](../CLAUDE.md)
+> Back to [README](../README.md)
 
-## Firmware Upgrade Process
+## Firmware Upgrade
 
-**IMPORTANT — Accessing "Firmware Ver." on this camera:**
-The "Firmware Ver." menu item is HIDDEN at the bottom of the Settings menu and is NOT visible by normal scrolling. To reach it:
-1. Power on in **Playback mode**
-2. Press **MENU**
-3. Navigate to the **Settings tab** (wrench icon)
-4. Press **UP arrow** — this jumps to the bottom of the menu, revealing "Firmware Ver." below "Grundeinstellungen" / "Reset All"
+For step-by-step firmware upgrade and CHDK installation instructions, see [Getting Started — Camera Setup](getting-started.md#camera-setup-first-time).
 
-**SD card must be UNLOCKED** (write-protect tab in the unlocked position) for the firmware update option to appear.
-
-### Steps
-
-1. **Check current firmware version**: Playback mode > MENU > Settings > UP > Firmware Ver.
-2. **Download firmware**: The update file is `IXY_920.FI2` (same file for all regional variants: IXUS 870 IS, SD880 IS, IXY 920 IS). Original Canon source (archived): `https://web.archive.org/web/2024/http://web.canon.jp/imaging/dcp/firm-e/pssd880is/data/pssd880is1010.exe` — extract `IXY_920.FI2` from the self-extracting .exe with 7-Zip.
-3. **Prepare SD card**: Place the `.fi2` file in the **root** of the SD card. SD card must be **unlocked**.
-4. **Install update**: Playback mode > MENU > Settings > UP > Firmware Ver. > follow prompts > confirm with FUNC.SET.
-5. **Do not power off** the camera during the update process.
-
-### Important Notes
-
-- Always ensure the battery (NB-5L) is fully charged before starting a firmware update.
-- Do not remove the SD card or battery during the update.
-- After updating, rebuild CHDK with the matching `PLATFORMSUB` (e.g., `100e` → `101a`).
+**Key detail for this camera:** The "Firmware Ver." menu item is HIDDEN at the bottom of the Settings menu. Press **UP arrow** to jump past "Reset All" to reveal it. SD card must be **unlocked**.
 
 ## CHDK (Canon Hack Development Kit)
 
@@ -33,19 +14,8 @@ CHDK is an optional third-party firmware enhancement that runs alongside the ori
 
 - **Supported firmware versions**: 1.00e, 1.01a, 1.02b
 - **Features**: RAW/DNG shooting, scripting (uBASIC/Lua), extended bracketing, live histogram, zebra mode, override shutter/aperture/ISO, and more.
-- **Installation**: Load CHDK onto a bootable SD card; it runs from the card without modifying the camera's internal firmware.
+- **Installation**: Load CHDK onto a bootable SD card; it runs from the card without modifying the camera's internal firmware. See [Getting Started — CHDK Installation](getting-started.md#chdk-installation) for step-by-step instructions.
 - **Compatibility**: You must download the CHDK build that matches your exact firmware version.
-
-### CHDK Installation Methods
-
-1. **Firmware Update Method (manual load each time)**:
-   - Start camera in Playback mode
-   - Press MENU > UP arrow > select Firmware Update > confirm with FUNC.SET
-   - CHDK loads into RAM; must repeat after each power-off
-
-2. **Bootable SD Card Method (automatic)**:
-   - Configure SD card as bootable for automatic CHDK loading on startup
-   - SD card lock switch must remain in the locked position
 
 ### Entering ALT Mode
 
@@ -79,37 +49,29 @@ CHDK features are accessed via ALT mode (typically short-press PRINT, SHORTCUT, 
 
 Configurable on-screen display including: battery status, temperature, memory usage, DOF calculator, clock, USB indicator. Layout editor available for element positioning.
 
-### Using as a Webcam (via CHDK + chdkptp)
+### Using as a Webcam
 
-CHDK enables a live view feed from the camera to a PC using the **PTP Extension** and the **chdkptp** client. The IXUS 870 IS is explicitly listed as a supported camera. This is not a native webcam — the camera does not appear as a video device — but the live view window can be captured with OBS to create a virtual webcam.
+#### This project's approach (H.264 bridge, 30 FPS)
+
+This project streams H.264 video at 640x480@30fps by running the camera's native recording pipeline and intercepting encoded frames via a custom CHDK module. A PC-side bridge (`chdk-webcam.exe`) decodes the H.264 stream and presents it as a DirectShow virtual webcam device visible in Zoom, Teams, OBS, etc. See [README](../README.md) and [Getting Started](getting-started.md) for setup.
+
+- **30 FPS** from the actual video encoder (not LCD refresh)
+- **640x480 native**, upscaled to 1280x720 on PC
+- **Zoom control** from the preview window (+/- keys, mouse wheel)
+- **Zero-copy** frame delivery, no on-camera processing overhead
+
+#### Alternative: chdkptp live view (generic CHDK, ~5-10 FPS)
+
+CHDK also supports a generic live view feed via the **PTP Extension** and the **chdkptp** client. This captures the camera's LCD buffer, not the video encoder output.
 
 - **Reference**: https://chdk.fandom.com/wiki/PTP_Extension
 
-**Required software**:
+**Limitations of chdkptp approach** (not applicable to this project):
 
-| Component | Purpose |
-|-----------|---------|
-| CHDK (1.00e build) | Firmware enhancement on camera |
-| chdkptp | PC client for PTP communication + live view |
-| libusb-win32 | Alternative USB driver (Windows) |
-| OBS Studio (optional) | Capture live view window as virtual webcam for Zoom/Teams/etc. |
-
-**Setup**:
-
-1. Install CHDK on the camera (must match firmware version 1.00e)
-2. Connect camera to PC via USB
-3. Install libusb-win32 driver on PC
-4. Run chdkptp and connect to the camera
-5. Start live view in chdkptp — the camera's LCD feed streams to a window on the PC
-6. (Optional) Use OBS Studio to capture the chdkptp window and enable Virtual Camera for use in video conferencing apps
-
-**Limitations**:
-
-- Frame rate is tied to the camera's LCD refresh — do not expect smooth 30fps video
-- Live view may stop updating or show artifacts if the camera LCD turns off
-- Requires chdkptp running on the PC at all times
-- Resolution is limited to the camera's LCD buffer, not the full sensor resolution
-- Additional features: camera can save JPGs directly to PC without storing on SD card
+- Frame rate tied to the camera's LCD refresh (~5-10 FPS, not 30 FPS)
+- Resolution limited to the LCD buffer, not the full sensor resolution
+- Requires OBS to capture the chdkptp window for use as a virtual webcam
+- Live view may stop updating if the camera LCD turns off
 
 ### Known CHDK Issues
 

@@ -2,6 +2,8 @@
 
 Camera-to-bridge debug channel for passing structured diagnostic data without interfering with the H.264 video stream.
 
+> **WARNING (v35e):** Debug frames MUST NOT be sent during live streaming. Each debug frame takes priority over an H.264 frame in the PTP response, causing the bridge to miss one video frame per debug frame sent. This produces systematic H.264 decoder artifacts (proven fact #30). The debug protocol is available for controlled diagnostic sessions only — never during normal webcam operation.
+
 ## Overview
 
 Debug frames use a dedicated format (`WEBCAM_FMT_DEBUG = 3` / `FRAME_FMT_DEBUG = 3`) carried over the existing PTP `GetMJPEGFrame` command. The bridge recognizes format=3 and routes the payload to a debug printer instead of the video decoder. Debug frames are never counted as video frames and never reach the webcam output.

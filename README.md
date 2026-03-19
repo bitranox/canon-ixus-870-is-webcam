@@ -1,22 +1,24 @@
-# Canon IXUS 870 IS — USB Webcam via CHDK
+# Canon IXUS 870 IS -- USB Webcam via CHDK
 
-Turn a Canon IXUS 870 IS into a USB webcam streaming 640x480 video at ~5 FPS. Uses a custom CHDK module on the camera and a PC-side bridge application that presents a DirectShow virtual webcam device visible in Zoom, Teams, OBS, and any other video app.
+Turn a Canon IXUS 870 IS into a USB webcam streaming H.264 video at 640x480@30fps, decoded and upscaled to 1280x720 on the PC. Uses a custom CHDK module on the camera and a PC-side bridge application with a preview window and optional DirectShow virtual webcam device.
 
 **Camera:** Canon IXUS 870 IS / PowerShot SD880 IS / IXY DIGITAL 920 IS
 **Firmware:** 1.01a (Digic IV, ARM926EJ-S, DryOS)
-**Status:** v0.0.1 — working, stable streaming
+**Status:** v35e -- stable, artifact-free streaming with zoom control
 
 ## Performance
 
 | Metric | Value |
 |--------|-------|
-| Resolution | 640x480 (native ISP output) |
-| Frame rate | ~4.9 FPS sustained |
-| Frame size | 614,400 bytes (uncompressed UYVY) |
-| USB throughput | ~24 Mbps (~3 MB/s) |
-| Dropped frames | 0 (stable over 5000+ frames) |
-| Camera CPU encoding load | 0% (raw DMA passthrough) |
+| Resolution | 640x480 native, upscaled to 1280x720 |
+| Frame rate | 30.0 FPS (matches camera encoder output) |
+| Decode rate | 99.2% (14 startup frames discarded before first IDR) |
+| Frame size | 35-46 KB typical (H.264), up to ~65 KB (IDR keyframes) |
+| PTP round-trip | min 6ms, avg 29ms, max 80ms |
+| Heap allocation | 0 bytes (zero-copy from ring buffer to USB) |
+| SD card writes | 0 bytes (drain mode suppresses MOV file creation) |
 | Streaming duration | Unlimited (auto-power-off disabled) |
+| Zoom | Real-time via preview window (+/- keys, mouse wheel), zero artifacts |
 
 ## Architecture
 
@@ -24,280 +26,87 @@ Turn a Canon IXUS 870 IS into a USB webcam streaming 640x480 video at ~5 FPS. Us
 ┌──────────────────────────────────────────────────────────────────┐
 │  CANON IXUS 870 IS (Digic IV, ARM926EJ-S, DryOS)               │
 │                                                                  │
-│  CCD ──► ISP ──► Recording Pipeline (640x480 UYVY @ 30fps)     │
-│  10MP    Image    DMA → 3 ring buffers in uncached RAM          │
-│          Signal                  │                               │
-│          Proc     rec_callback_spy ← pipeline callback @ 30fps  │
-│                     │ captures UYVY buffer address (arg2)        │
-│                     │                                            │
-│                   capture_frame_uyvy()                           │
-│                     │ word-aligned copy 614KB                    │
-│                     │                                            │
-│                   PTP opcode 0x9999 (GetMJPEGFrame)             │
-│                     │ sends 614,400 bytes raw UYVY              │
-│                     │ format in param4 high byte                 │
-└─────────────────────┼────────────────────────────────────────────┘
-                      │ USB 2.0 High Speed (480 Mbps)
-┌─────────────────────┼────────────────────────────────────────────┐
-│  PC (Windows)       │                                            │
-│                     │                                            │
-│  chdk-webcam.exe    │                                            │
-│    PTPClient (libusb-1.0) ── receives raw UYVY frames           │
-│    FrameProcessor ────────── BT.601 UYVY→RGB24 conversion       │
-│    PreviewWindow ─────────── Win32 GDI live preview              │
-│    VirtualWebcam ─────────── DirectShow "CHDK Webcam" device    │
+│  CCD ──► ISP ──► JPCORE H.264 encoder (640x480 @ 30fps)        │
+│  10MP    Image          │                                        │
+│          Signal         ▼                                        │
+│          Proc    Ring buffer (256KB slots, AVCC format)          │
+│                         │                                        │
+│                  spy_ring_write (movie_rec.c)                    │
+│                    │ cache invalidate + AVCC parse               │
+│                    │ dual-slot seqlock at 0xFF000                │
+│                    │ suppresses SD writes (+0x80=0)              │
+│                    ▼                                             │
+│                  capture_frame_h264 (webcam.c)                   │
+│                    │ polls seqlock with msleep(10)               │
+│                    │ zero-copy: passes ring buffer ptr to PTP    │
+│                    ▼                                             │
+│                  PTP opcode 0x9999 (CHDK_GetMJPEGFrame)         │
+│                    │ sends H.264 AVCC frame (35-65 KB)          │
+│                    │ zoom piggybacked on frame request           │
+└────────────────────┼─────────────────────────────────────────────┘
+                     │ USB 2.0 High Speed (480 Mbps)
+┌────────────────────┼─────────────────────────────────────────────┐
+│  PC (Windows)      │                                             │
+│                    ▼                                             │
+│  chdk-webcam.exe                                                 │
+│    PTPClient (libusb-1.0) ── receives H.264 AVCC frames         │
+│    H264Decoder (FFmpeg) ──── decodes to YUV420P                  │
+│    FrameProcessor ────────── YUV→RGB24, upscale to 1280x720     │
+│    PreviewWindow ─────────── Win32 GDI preview + zoom control    │
+│    VirtualWebcam ─────────── DirectShow "CHDK Webcam" device     │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+For detailed architecture documentation, see [Architecture](docs/architecture.md).
+
+## Features
+
+- **30 FPS H.264 streaming** from the camera's native video encoder
+- **Zero-copy frame delivery** -- no on-camera memory allocation or copying
+- **Real-time zoom control** -- 10 positions (28-112mm), zero artifacts during zoom
+- **DirectShow virtual webcam** -- appears as "CHDK Webcam" in Zoom, Teams, OBS
+- **Preview window** -- real-time video with zoom input via keyboard and mouse wheel
+- **PTP firmware upload** -- deploy new firmware over USB without removing the SD card
+- **Dual-slot seqlock** -- lock-free producer-consumer protocol for reliable frame delivery
+- **SD write suppression** -- no MOV files created, unlimited streaming duration
+
+## Pre-built Binaries
+
+Ready-to-use binaries are included in the repository -- no compilation required:
+
+| File | Path | Purpose |
+|------|------|---------|
+| `chdk-webcam.exe` | [`bridge/build/Release/chdk-webcam.exe`](bridge/build/Release/chdk-webcam.exe) | PC-side bridge application |
+| `DISKBOOT.BIN` | [`chdk/bin/DISKBOOT.BIN`](chdk/bin/DISKBOOT.BIN) | CHDK firmware for the camera |
+| `webcam.flt` | [`chdk/CHDK/MODULES/webcam.flt`](chdk/CHDK/MODULES/webcam.flt) | Webcam module for CHDK |
+
 ## Quick Start
 
-### Prerequisites
+1. **Copy firmware to SD card** -- put `DISKBOOT.BIN` in the SD card root, `webcam.flt` in `CHDK/MODULES/`
+2. **Boot camera with CHDK** -- Playback mode > MENU > Settings > UP > Firmware Ver. > FUNC.SET
+3. **Install USB driver** (first time) -- use [Zadig](https://zadig.akeo.ie/) to set "Canon Digital Camera" to libusb-win32
+4. **Stream** -- run `chdk-webcam.exe` -- the camera appears as "CHDK Webcam"
 
-| Component | Purpose |
-|-----------|---------|
-| Canon IXUS 870 IS | Camera (firmware 1.01a) |
-| SD card (≤2GB, FAT16) | CHDK boot medium |
-| USB cable (Mini-B) | Camera to PC connection |
-| Docker | CHDK cross-compilation |
-| Visual Studio 2019/2022 | Bridge C++ build |
-| vcpkg | Package manager for libusb + libjpeg-turbo |
-| Zadig | USB driver replacement (libusb-win32) |
+To build from source, see **[Getting Started](docs/getting-started.md)**.
 
-### 1. Build CHDK (camera firmware)
+### Zoom Control
 
-```bash
-docker run --rm -v "/path/to/chdk:/srv/src" chdkbuild \
-    make PLATFORM=ixus870_sd880 PLATFORMSUB=101a fir
-```
+When the preview window is focused:
+- **Keyboard:** `+` / `-` keys (or numpad `+` / `-`) to zoom in/out
+- **Mouse wheel:** scroll up to zoom in, scroll down to zoom out
 
-Output: `chdk/bin/DISKBOOT.BIN` + `chdk/CHDK/MODULES/webcam.flt`
+## Documentation
 
-### 2. Build the bridge (PC application)
-
-```batch
-:: Install dependencies
-C:\vcpkg\vcpkg install libusb:x64-windows libjpeg-turbo:x64-windows
-
-:: Configure
-cmake -B bridge\build -S bridge -G "Visual Studio 17 2022" -A x64 ^
-    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
-
-:: Build
-cmake --build bridge\build --config Release
-```
-
-Output: `bridge/build/Release/chdk-webcam.exe`
-
-### 3. Deploy to camera
-
-1. Copy `DISKBOOT.BIN` to SD card root
-2. Copy `webcam.flt` to `CHDK/MODULES/` on SD card
-3. Insert SD card into camera (must be **unlocked**)
-4. Boot camera in **Playback mode**
-5. Load CHDK: MENU → Settings → press **UP arrow** → Firmware Ver. → confirm with FUNC.SET
-
-> **Note:** "Firmware Ver." is hidden at the bottom of the Settings menu. You must press **UP** to jump past "Reset All" to reveal it.
-
-### 4. Install USB driver
-
-The camera must use the `libusb-win32` driver instead of the default Canon PTP driver:
-
-1. Connect camera, power on, load CHDK
-2. Run [Zadig](https://zadig.akeo.ie/)
-3. Select "Canon Digital Camera"
-4. Choose "libusb-win32" as target driver
-5. Click "Replace Driver"
-
-### 5. Stream
-
-```bash
-# Preview window + virtual webcam
-chdk-webcam.exe
-
-# Preview only (no virtual webcam device)
-chdk-webcam.exe --no-webcam
-
-# Mirror for selfie mode
-chdk-webcam.exe --flip-h
-```
-
-The camera appears as **"CHDK Webcam"** in any video application.
-
-## Command-Line Options
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-q, --quality N` | 50 | JPEG quality (software fallback path only) |
-| `--flip-h` | off | Mirror horizontally |
-| `--flip-v` | off | Flip vertically |
-| `--no-webcam` | off | Skip DirectShow virtual webcam |
-| `--no-preview` | off | Skip preview window |
-| `--verbose` | off | Per-frame statistics |
-
-## How It Works
-
-### Camera Side (CHDK Module)
-
-The webcam module (`webcam.c`) performs these steps:
-
-1. **Switch to video mode** — `switch_mode_usb(1)` then `shooting_set_mode_chdk(MODE_VIDEO_STD)` activates the ISP video pipeline at 640x480 UYVY @ 30fps internally.
-
-2. **Activate recording pipeline** — `StartMjpegMaking()` enables the JPCORE subsystem, then `state[+0xD4] = 2` forces the `FrameProcessing` dispatcher to take the video recording path instead of the EVF/LCD path. Without this, no recording callbacks fire.
-
-3. **Install callback spy** — A function pointer at `state[+0x114]` is set to `rec_callback_spy`, which receives the UYVY frame buffer address in `arg2` at 30fps. The firmware rotates through 3 DMA ring buffers in uncached RAM.
-
-4. **Capture frames** — `capture_frame_uyvy()` copies 614KB from the DMA buffer using word-aligned transfer (~3ms). Stale frame detection skips duplicates.
-
-5. **PTP transfer** — Frames are sent over USB using CHDK PTP opcode `0x9999` (sub-command 15). The frame format (UYVY vs JPEG) is encoded in the high byte of `param4`.
-
-### PC Side (Bridge)
-
-The bridge receives raw UYVY frames and:
-
-1. **Converts color** — BT.601 fixed-point UYVY→RGB24 with Digic IV signed chroma handling
-2. **Outputs to DirectShow** — Virtual webcam filter ("CHDK Webcam") visible in all video apps
-3. **Shows preview** — Win32 GDI window for live monitoring
-
-### Digic IV Signed Chroma
-
-Digic IV stores U/V chroma as **signed int8** centered at 0 (range -128..+127), NOT unsigned centered at 128 (standard UYVY). You must interpret them as `int8_t`:
-
-```cpp
-// CORRECT — Digic IV signed chroma
-int u = static_cast<int>(static_cast<int8_t>(src[0]));  // -128..+127
-int v = static_cast<int>(static_cast<int8_t>(src[2]));  // -128..+127
-
-// WRONG — produces green color cast on whites
-int u = static_cast<int>(src[0]) - 128;
-```
-
-## Project Structure
-
-```
-├── CLAUDE.md                           Project documentation / dev notes
-├── README.md                           This file
-├── CHANGELOG.md                        Version history
-│
-├── chdk/                               CHDK source tree
-│   ├── modules/
-│   │   ├── webcam.c                    Webcam CHDK module (main)
-│   │   ├── webcam.h                    Module interface
-│   │   ├── tje.c                       Tiny JPEG Encoder (software fallback)
-│   │   └── tje.h                       TJE header
-│   ├── core/
-│   │   └── ptp.c                       PTP handler (GetMJPEGFrame command)
-│   └── platform/ixus870_sd880/sub/101a/
-│       └── stubs_entry.S              Firmware function stubs
-│
-├── bridge/                             PC-side bridge application
-│   ├── CMakeLists.txt                  CMake build config
-│   └── src/
-│       ├── main.cpp                    Entry point, streaming loop
-│       ├── ptp/
-│       │   ├── ptp_client.cpp          libusb PTP client
-│       │   └── ptp_client.h            PTP/CHDK protocol definitions
-│       └── webcam/
-│           ├── frame_processor.cpp     BT.601 UYVY→RGB + JPEG decode
-│           ├── frame_processor.h       Frame processor interface
-│           ├── preview_window.cpp      Win32 GDI preview window
-│           ├── preview_window.h        Preview window interface
-│           ├── virtual_webcam.cpp      DirectShow virtual webcam
-│           └── virtual_webcam.h        Virtual webcam interface
-│
-├── 640x480_raw/                        Snapshot of working source files
-│
-├── firmware-analysis/                  Ghidra RE scripts and output
-│   ├── Decompile*.java                 Ghidra decompilation scripts
-│   ├── ResolveDAT*.java                Data reference resolution scripts
-│   └── *_decompiled.txt                Decompilation output
-│
-└── firmware-dumps/                     Canon firmware dump collection
-```
-
-## PTP Protocol
-
-All webcam communication uses CHDK's vendor PTP opcode `0x9999` with sub-command 15 (`GetMJPEGFrame`).
-
-### Start Streaming
-
-```
-Command:  opcode=0x9999, param1=15, param2=quality, param3=0x01
-Response: param1=0 (success), param4=0xBEEF
-Data:     576 bytes pipeline diagnostics
-```
-
-### Get Frame
-
-```
-Command:  opcode=0x9999, param1=15, param2=0, param3=0
-Response: param1=frame_size, param2=width, param3=height,
-          param4=(format<<24)|(frame_num & 0xFFFFFF)
-Data:     frame_size bytes (UYVY or JPEG)
-```
-
-Format in `param4` high byte: `0x00` = JPEG, `0x01` = UYVY
-
-### Stop Streaming
-
-```
-Command:  opcode=0x9999, param1=15, param2=0, param3=0x02
-Response: param1=0
-```
-
-## Firmware Reverse Engineering
-
-Extensive reverse engineering was performed on the IXUS 870 IS firmware (1.01a) using Ghidra. Key findings are documented in `firmware-analysis/` and include:
-
-- **Video pipeline architecture** — ISP → FrameProcessing → recording callbacks
-- **Hardware encoding architecture** — three JPCORE instances (JPEG, H.264, lossless), ISP routing, power management
-- **ISP routing registers** — source selection, resizer, pipeline modes
-- **Recording callback chain** — how `state[+0xD4]` controls EVF vs video path
-- **DMA buffer management** — triple ring buffer rotation in uncached RAM
-- **~40 firmware functions decompiled** — pipeline, callbacks, state machine, power
-
-### Key Firmware Addresses (fw 1.01a)
-
-| Function | Address | Purpose |
-|----------|---------|---------|
-| `StartMjpegMaking` | `0xFF9E8DD8` | Activate recording pipeline |
-| `StopMjpegMaking` | `0xFF9E8DF8` | Deactivate recording pipeline |
-| `GetMovieJpegVRAMHPixelsSize` | `0xFF8C4178` | Returns frame width (640) |
-| `GetMovieJpegVRAMVPixelsSize` | `0xFF8C4184` | Returns frame height (480) |
-| `JPCORE_PowerInit` | `0xFF8EEB6C` | Ref-counted JPCORE power-on |
-
-### State Structure at RAM 0x70D8
-
-| Offset | Purpose |
-|--------|---------|
-| `+0x48` | MJPEG active flag (0=off, 1=on) |
-| `+0xD4` | **Video mode (1=EVF/LCD, 2=VGA recording)** |
-| `+0xEC` | Pipeline active (must be 1 before StartMjpegMaking) |
-| `+0x114` | **Recording callback 1 — our spy goes here** |
-| `+0x144` | DMA double-buffer 0 address |
-| `+0x148` | DMA double-buffer 1 address |
-
-### Hardware Encoding Architecture (Digic IV)
-
-The IXUS 870 IS uses a **single ISP-attached encoding pipeline** controlled through registers at `0xC0F0xxxx`–`0xC0F1xxxx`. Unlike Canon EOS DSLRs (which have separate JPCORE/JP62/JP57 hardware blocks at `0xC0E0xxxx`), the PowerShot compact uses mode parameters to switch the same hardware between JPEG (still images) and H.264 (video recording).
-
-The IXUS 870 IS records video as **H.264 in MOV container** (not MJPEG in AVI like its predecessor, the IXUS 860 IS on Digic III). Canon kept the legacy "MJPEG" function names (`StartMjpegMaking`, `GetContinuousMovieJpegVRAMData`) in the Digic IV firmware even though the underlying encoder changed to H.264.
-
-**Why hardware encoding cannot be used for webcam streaming:**
-
-- **JPEG encoder:** The JPCORE hardware works for still image capture but requires full recording pipeline initialization (`sub_FF8C3BFC` + frame dispatch callbacks) to deliver frames in video mode. Partial initialization results in the VRAM buffer never being written.
-- **H.264 encoder:** H.264 uses inter-frame prediction (P-frames reference I-frames), so individual frames cannot be decoded independently. The movie recording pipeline crashes when partially initialized.
-- **Result:** Raw UYVY streaming (capturing pre-encoding ISP output) is the optimal approach. All color conversion is handled PC-side with zero on-camera encoding overhead.
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| "Operation timed out" on connect | Power-cycle the camera |
-| No frames (all dropped) | Verify CHDK is loaded and `webcam.flt` exists on SD card |
-| Green/wrong colors | U/V chroma must be treated as signed `int8_t` (see above) |
-| ~1.3 FPS instead of ~5 FPS | Falling back to software JPEG — check `state[+0xD4]` is set to 2 |
-| Camera powers off during streaming | `disable_shutdown()` may not have taken effect — increase startup delay |
-| Build fails: pwsh.exe not found | Harmless vcpkg post-build error — the exe was built successfully |
+| Document | Description |
+|----------|-------------|
+| [Getting Started](docs/getting-started.md) | Setup, build, deploy, run, and troubleshooting |
+| [Architecture](docs/architecture.md) | System design, PTP protocol, seqlock, H.264 format |
+| [Camera & CHDK Reference](docs/camera-and-chdk.md) | Firmware upgrade, CHDK installation, ALT mode |
+| [Firmware Reverse Engineering](docs/firmware-reverse-engineering.md) | Ghidra project, memory map, ISP architecture |
+| [Development Log](docs/development-log.md) | Full implementation history (v0-v35e) |
+| [Debug Frame Protocol](docs/debug-frame-protocol.md) | Camera-to-bridge debug channel (disabled during streaming) |
+| [Proven Facts](docs/proven-facts.md) | Verified addresses, data formats, constraints (32 facts) |
+| [Changelog](CHANGELOG.md) | Version history |
 
 ## Camera Specifications
 
@@ -308,18 +117,27 @@ The IXUS 870 IS records video as **H.264 in MOV container** (not MJPEG in AVI li
 | Processor | Digic IV (ARM926EJ-S) |
 | OS | DryOS |
 | Sensor | 10.0 MP, 1/2.3" CCD |
-| Lens | 4x zoom (28-112mm equiv.), F2.8-5.8 |
-| Video | 640x480@30fps MOV (H.264 + Linear PCM) |
+| Lens | 4x zoom (28-112mm equiv.), F2.8-5.8, Optical IS |
+| Video | 640x480@30fps MOV (H.264 Baseline + Linear PCM) |
 | USB | Mini-B, USB 2.0 High Speed |
 | Battery | NB-5L lithium-ion |
 | Released | 2008 |
 
+## Known Limitations
+
+- **Windows only** -- the bridge uses Win32 GDI and DirectShow (no Linux/macOS support)
+- **Single camera model** -- built specifically for the IXUS 870 IS (firmware 1.01a)
+- **640x480 native** -- limited by the camera's video encoder; upscaled to 1280x720 on PC
+- **~0.5s startup delay** -- H.264 decoder discards P-frames until the first IDR keyframe
+- **No audio** -- video only (Linear PCM from the recording pipeline is not captured)
+
 ## License
 
-This project uses CHDK (GPL) components. The Tiny JPEG Encoder (`tje.c`) is MIT licensed. Provided for educational and personal use.
+This project uses CHDK (GPL) components. Provided for educational and personal use.
 
 ## Acknowledgments
 
-- [CHDK project](https://chdk.fandom.com/) — the foundation that makes this possible
-- [Ghidra](https://ghidra-sre.org/) — firmware reverse engineering
-- [libusb](https://libusb.info/) — cross-platform USB access
+- [CHDK project](https://chdk.fandom.com/) -- the foundation that makes this possible
+- [Ghidra](https://ghidra-sre.org/) -- firmware reverse engineering
+- [FFmpeg](https://ffmpeg.org/) -- H.264 decoding
+- [libusb](https://libusb.info/) -- cross-platform USB access

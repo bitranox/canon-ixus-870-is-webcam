@@ -1,6 +1,6 @@
 # Firmware Reverse Engineering (Ghidra)
 
-> Back to [CLAUDE.md](../CLAUDE.md)
+> Back to [README](../README.md)
 
 ## Ghidra Project Setup
 
@@ -63,12 +63,16 @@ Firmware strings confirm the encoding subsystem:
 **Why `GetContinuousMovieJpegVRAMData` never produces JPEG output:**
 The function requires the full movie recording pipeline to be initialized via `sub_FF8C3BFC`, which sets up frame dispatch pointers (`state[+0x114]`, `state[+0x118]`, `state[+0x6C]`). The frame dispatch function (`FUN_ff8c335c`) checks `state[+0xF0]==1` AND `state[+0x48]==1` AND `state[+0x6C]!=NULL` before delivering encoded frames. Without the complete recording task initialization, no frames are delivered to the VRAM buffer. Additionally, the video path produces H.264 frames (not JPEG) which cannot be decoded independently due to inter-frame prediction.
 
-**Why H.264 frames cannot be used for webcam streaming:**
-H.264 uses inter-frame prediction (P-frames reference I-frames), so individual frames cannot be decoded independently. The movie recording pipeline (`task_MovieRecord`, `task_MovWrite`) crashes when partially initialized.
+**Early conclusion (v0.0.1, WRONG — later disproved):**
+> "H.264 frames cannot be used for webcam streaming because P-frames reference I-frames and the pipeline crashes when partially initialized."
 
-**Result:** The raw UYVY approach (capturing pre-encoding ISP output at ~5 FPS) is the optimal solution for webcam streaming on this camera.
+**Actual solution (v35e):** H.264 streaming at 30 FPS works by running the **full, unmodified** recording pipeline (`UIFS_StartMovieRecord`) and intercepting encoded frames via a hook in the msg 6 handler (`spy_ring_write` in `movie_rec.c`). SD writes are suppressed by clearing `ring_buf+0x80` and using drain mode (`+0x88=1`). The H.264 GOP structure (~11 frames, IDR every ~0.4s) provides sufficient keyframes for the PC-side FFmpeg decoder. See [Proven Facts](proven-facts.md) for the complete architecture.
+
+---
 
 ## Hardware MJPEG Encoder — Reverse Engineering Results (Legacy Investigation)
+
+> **LEGACY — This section documents the failed hardware JPEG encoding approach (v4–v10, Feb 2026). The project moved to H.264 direct streaming via spy_ring_write (v22+). This content is preserved for historical reference only. For the current architecture, see [Architecture](architecture.md) and [Development Log](development-log.md).**
 
 The firmware functions below were extensively investigated as potential hardware JPEG encoding paths. They are documented here for reference, but **do not produce JPEG output** on the IXUS 870 IS because the video pipeline routes to JP62 (H.264), not JPCORE (JPEG).
 
