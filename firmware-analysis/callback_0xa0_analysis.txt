@@ -1,0 +1,126 @@
+Raw ARM instructions at 0xFF85DDA8:
+  0xFF85DDA8: E51F0D78  ldr r0,[0xff85d038]
+  0xFF85DDAC: E92D4010  stmdb sp!,{r4,lr}
+  0xFF85DDB0: E5900008  ldr r0,[r0,#0x8]
+  0xFF85DDB4: E3500000  cmp r0,#0x0
+  0xFF85DDB8: 13A03000  movne r3,#0x0
+  0xFF85DDBC: 124F2094  adrne r2,0xff85dd30
+  0xFF85DDC0: 13A01000  movne r1,#0x0
+  0xFF85DDC4: 124F0048  adrne r0,0xff85dd84
+  0xFF85DDC8: 1BFFA6D6  blne 0xff847928
+  0xFF85DDCC: E51F1DA8  ldr r1,[0xff85d02c]
+  0xFF85DDD0: E24F00C0  adr r0,0xff85dd18
+  0xFF85DDD4: E58100A0  str r0,[r1,#0xa0]
+  0xFF85DDD8: E8BD8010  ldmia sp!,{r4,pc}
+  0xFF85DDDC: E51F0DB8  ldr r0,[0xff85d02c]
+  0xFF85DDE0: E5900014  ldr r0,[r0,#0x14]
+  0xFF85DDE4: EAFF25E6  b 0xff827584
+  0xFF85DDE8: E92D4008  stmdb sp!,{r3,lr}
+  0xFF85DDEC: EB00011B  bl 0xff85e260
+  0xFF85DDF0: E1A01000  mov r1,r0
+  0xFF85DDF4: E3A0000A  mov r0,#0xa
+
+No containing function found
+
+Raw ARM instructions at 0xFF85DD14 (no-op callback):
+  0xFF85DD14: E12FFF1E  no instruction
+  0xFF85DD18: E51F0CF4  ldr r0,[0xff85d02c]
+  0xFF85DD1C: E24F1010  adr r1,0xff85dd14
+  0xFF85DD20: E58010A0  str r1,[r0,#0xa0]
+  0xFF85DD24: E3A01003  mov r1,#0x3
+
+
+=== sub_FF85DE1C (msg 2 handler) ===
+
+void FUN_ff85de1c(void)
+
+{
+  ushort uVar1;
+  undefined4 *puVar2;
+  int iVar3;
+  int iVar4;
+  undefined4 *puVar5;
+  undefined4 uVar6;
+  undefined4 extraout_r1;
+  int iVar7;
+  undefined4 local_30;
+  int local_2c;
+  undefined4 local_28;
+  int local_24;
+  undefined4 local_20;
+  
+  iVar3 = DAT_ff85d02c;
+  *(undefined4 *)(DAT_ff85d02c + 0x2c) = 0;
+  *(undefined4 *)(iVar3 + 0x30) = 0;
+  iVar7 = *(int *)(iVar3 + 0x48);
+  uVar6 = FUN_ffad3d98(iVar7 * 1000,1000);
+  iVar4 = DAT_ff85d038;
+  *(undefined4 *)(iVar3 + 0x40) = uVar6;
+  if (*(int *)(iVar4 + 8) == 0) goto LAB_ff85deac;
+  uVar6 = 4;
+  if (iVar7 != 0x14) {
+    if (iVar7 < 0x15) {
+      if (iVar7 == 10 || iVar7 == 0xf) {
+        *(undefined4 *)(iVar4 + 0x14) = 2;
+        goto LAB_ff85deac;
+      }
+LAB_ff85dea0:
+      switchD_ff8443f8::default(DAT_ff85d974,DAT_ff85e330);
+      goto LAB_ff85deac;
+    }
+    if (iVar7 != 0x1e) {
+      if (iVar7 != 0x3c) goto LAB_ff85dea0;
+      uVar6 = 8;
+    }
+  }
+  *(undefined4 *)(iVar4 + 0x14) = uVar6;
+LAB_ff85deac:
+  puVar2 = DAT_ff85d028;
+  local_30 = 1;
+  if (*(short *)(iVar3 + 2) == 0) {
+    local_2c = *(int *)(iVar3 + 0x48);
+    local_28 = local_30;
+    local_24 = local_2c;
+    if (local_2c == 0x3c) {
+      local_30 = 100;
+      local_2c = DAT_ff85d688;
+      local_28 = local_30;
+      local_24 = DAT_ff85d688;
+    }
+  }
+  else {
+    local_24 = 0xf;
+    local_28 = 1;
+    local_2c = 1;
+    uVar1 = *(ushort *)(iVar3 + 4);
+    local_30 = FUN_ffad3d98((uint)uVar1,1000);
+    puVar2[2] = 0xf;
+    puVar2[4] = (uint)uVar1;
+  }
+  FUN_ff871c58(*(undefined4 *)(iVar3 + 0x80),0xa8,&local_24,2);
+  FUN_ff871c58(*(undefined4 *)(iVar3 + 0x80),0xa7,&local_28,2);
+  FUN_ff871c58(*(undefined4 *)(iVar3 + 0x80),0xa0,&local_2c,4);
+  FUN_ff871c58(*(undefined4 *)(iVar3 + 0x80),0xa1,&local_30,4);
+  FUN_ff86bff0(0xc,0,DAT_ff85d6a4);
+  puVar5 = DAT_ff85d6a4;
+  if (*(int *)(iVar3 + 0x44) == 2) {
+    *DAT_ff85d6a4 = DAT_ff85e334;
+    puVar5[1] = puVar5[1] + -0x278d00;
+  }
+  FUN_ff92f484(*puVar5,puVar5[1],DAT_ff85d038 + -0x18,DAT_ff85d038,FUN_ff85dde8);
+  XREF_FUN_ff92f734(*(undefined4 *)(iVar3 + 0x7c),extraout_r1,*(undefined4 *)(iVar3 + 0xb0),
+                    *(undefined4 *)(iVar3 + 0xb4),*(undefined4 *)(iVar3 + 0x80));
+  FUN_ff92e324(*puVar2,DAT_ff85e328 + -4);
+  XREF_FUN_ff8eda0c(*(undefined4 *)(DAT_ff85e338 + *(int *)(iVar3 + 0x44) * 8 + puVar2[3] * 4));
+  FUN_ff8edce8(&LAB_ff85dddc,0);
+  if (*(int *)(iVar4 + 8) != 0) {
+    FUN_ff92fcd8(&local_20);
+    FUN_ff847c0c(local_20,*(undefined4 *)(iVar4 + 0xc));
+    FUN_ff92fcd8(&local_20);
+    FUN_ff847c0c(local_20,*(undefined4 *)(iVar4 + 0xc));
+  }
+  *(undefined4 *)(iVar3 + 0x3c) = 2;
+  *(undefined1 **)(iVar3 + 0xa0) = &LAB_ff85dda8;
+  return;
+}
+

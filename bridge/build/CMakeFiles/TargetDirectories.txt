@@ -1,0 +1,4 @@
+C:/projects/ixus870IS/bridge/build/CMakeFiles/chdk-webcam.dir
+C:/projects/ixus870IS/bridge/build/CMakeFiles/INSTALL.dir
+C:/projects/ixus870IS/bridge/build/CMakeFiles/ALL_BUILD.dir
+C:/projects/ixus870IS/bridge/build/CMakeFiles/ZERO_CHECK.dir

@@ -1,0 +1,6 @@
+C:\projects\ixus870IS\bridge\src\main.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\main.obj
+C:\projects\ixus870IS\bridge\src\ptp\ptp_client.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\ptp_client.obj
+C:\projects\ixus870IS\bridge\src\webcam\frame_processor.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\frame_processor.obj
+C:\projects\ixus870IS\bridge\src\webcam\h264_decoder.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\h264_decoder.obj
+C:\projects\ixus870IS\bridge\src\webcam\preview_window.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\preview_window.obj
+C:\projects\ixus870IS\bridge\src\webcam\virtual_webcam.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\virtual_webcam.obj

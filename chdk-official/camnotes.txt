@@ -1,0 +1,15 @@
+
+*** Build Information ***
+CHDK for ixus870_sd880 fw:101a PID:12694
+build:1.6.1-6315 date:Wed, 18 Jun 2025 05:57:36 +0200
+
+*** Camera specific notes ***
+Beta port of CHDK for the Canon IXUS 870 IS / Powershot SD880.
+
+Forum thread for this port:
+
+  http://chdk.setepontos.com/index.php/topic,3309.0.html
+
+Wikia page:
+
+  http://chdk.wikia.com/wiki/IXUS870IS

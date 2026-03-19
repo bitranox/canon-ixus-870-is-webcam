@@ -1,0 +1,13 @@
+{
+  "name": "chdk-webcam",
+  "version": "1.0.0",
+  "description": "USB webcam bridge for Canon IXUS 870 IS via CHDK",
+  "dependencies": [
+    "libusb",
+    {
+      "name": "ffmpeg",
+      "features": ["avcodec", "swscale"]
+    },
+    "libjpeg-turbo"
+  ]
+}

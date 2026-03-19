@@ -1,0 +1,321 @@
+// Ghidra script: Comprehensive decompilation of the msg 6 write pipeline
+// Focus: sub_FF8EDBE0 callees, semaphore signaling chain, completion callbacks,
+//        state machine recovery, task_MovWrite case handlers
+//
+// Run headlessly:
+//   analyzeHeadless C:\projects\ixus870IS\firmware-analysis\ghidra_project ixus870_101a
+//     -process -noanalysis -scriptPath C:\projects\ixus870IS\firmware-analysis
+//     -postScript DecompileWritePipeline.java
+// @category Analysis
+
+import ghidra.app.script.GhidraScript;
+import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.decompiler.DecompileResults;
+import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.InstructionIterator;
+import ghidra.program.model.address.Address;
+import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.ReferenceIterator;
+
+import java.io.*;
+import java.util.*;
+
+public class DecompileWritePipeline extends GhidraScript {
+
+    private DecompInterface decomp;
+    private Set<Long> visited = new HashSet<>();
+    private StringBuilder output = new StringBuilder();
+    private int successCount = 0;
+    private int failCount = 0;
+
+    // Primary targets — decompile these with full callee recursion
+    private static final long[] PRIMARY_TARGETS = {
+        // === THE WRITE/DMA TRIGGER (most critical missing piece) ===
+        0xFF8EDA90L,  // FUN_ff8eda90 — called by sub_FF8EDBE0, triggers actual DMA/write
+
+        // === sub_FF8EDBE0 and its state struct ===
+        0xFF8EDBE0L,  // Re-decompile with 3-level callees (14 params, encode state struct)
+
+        // === Completion callback chain (what signals the semaphore?) ===
+        0xFF8EFB14L,  // JPCORE event flag management (clear events 3, 0x11)
+        0xFF8F1F48L,  // Post-encode step 1 (called by sub_FF8EDC88)
+        0xFF8F166CL,  // Post-encode step 2 (called by sub_FF8EDC88)
+        0xFF8EEA30L,  // Power management (called by sub_FF8EDC88)
+        0xFF8EEFC4L,  // Encoder state set (called by sub_FF8EDCC4 with arg 1)
+        0xFF8EEE24L,  // Encoder mode set (called by sub_FF8EDCC4 with arg 4)
+
+        // === sub_FF8EDC88 and sub_FF8EDCC4 (cleanup/post-encode) ===
+        0xFF8EDC88L,  // SD write cleanup — called with arg 1 (first) and 0 (final)
+        0xFF8EDCC4L,  // Encoder control 2
+
+        // === Message posting to task_MovWrite ===
+        0xFF92F6DCL,  // Posts msg 8 to task_MovWrite (used by sub_FF930358 error cleanup)
+        0xFF92FCFCL,  // Posts frame data msg to task_MovWrite (used by sub_FF9300B4)
+
+        // === Error/state management ===
+        0xFF847B84L,  // Conditional check in msg 6 handler
+        0xFF92E3B0L,  // Quality/state update (near set_quality call)
+        0xFF930358L,  // Error cleanup (sets +0x88=1, posts msg 8)
+
+        // === JPCORE interrupt handler (completion → GiveSemaphore path) ===
+        0xFF849168L,  // JPCORE interrupt handler
+        0xFF869508L,  // Event flag set (likely signals encode completion)
+        0xFF827584L,  // GiveSemaphore
+
+        // === task_MovWrite case handlers ===
+        0xFF92F1ECL,  // task_MovWrite main loop
+        0xFF9309E4L,  // case 1 handler
+        0xFF930624L,  // case 6 handler
+        0xFF930544L,  // Called after switch (cleanup)
+        0xFF92EF1CL,  // case 4 handler (XREF)
+        0xFF9306E8L,  // case 5 handler (XREF)
+        0xFF92F030L,  // case 3 handler (XREF)
+
+        // === DMA functions ===
+        0xFF8C4208L,  // DMA trigger
+        0xFF8C4288L,  // DMA check/wait
+
+        // === Ring buffer management ===
+        0xFF9300B4L,  // Ring buffer slot free (advances +0x1C read ptr)
+        0xFF930390L,  // Called from sub_FF85D98C
+    };
+
+    // Functions that are well-known OS primitives — don't recurse into
+    private static final Set<Long> OS_PRIMITIVES = new HashSet<>(Arrays.asList(
+        0xFF81099CL,  // msleep / SleepTask
+        0xFF827098L,  // ReceiveMessageQueue
+        0xFF8279ECL,  // TryPostMessageQueue
+        0xFF827584L,  // GiveSemaphore (decompile body but don't recurse)
+        0xFF8274C4L,  // TakeSemaphore (decompile body but don't recurse)
+        0xFF811A2CL,  // CreateTask
+        0xFF8269D0L,  // CreateMessageQueue
+        0xFF82708CL   // DeleteMessageQueue
+    ));
+
+    // Max recursion depth for callee decompilation
+    private static final int MAX_DEPTH = 3;
+
+    @Override
+    public void run() throws Exception {
+        decomp = new DecompInterface();
+        decomp.openProgram(currentProgram);
+        decomp.setSimplificationStyle("decompile");
+
+        output.append("=======================================================================\n");
+        output.append("Write Pipeline — Comprehensive Decompilation (3-level depth)\n");
+        output.append("Firmware: Canon IXUS 870 IS / SD880 IS, version 1.01a\n");
+        output.append("Generated by DecompileWritePipeline.java (Ghidra headless)\n");
+        output.append("Focus: msg 6 write pipeline, semaphore signaling, completion callbacks\n");
+        output.append("=======================================================================\n\n");
+
+        // First, read the DAT_ff8ed984 value (encode state struct address)
+        output.append("=======================================================================\n");
+        output.append("DATA: Encode state struct pointer at DAT_ff8ed984\n");
+        output.append("=======================================================================\n");
+        try {
+            Address datAddr = toAddr(0xFF8ED984L);
+            byte[] bytes = new byte[4];
+            currentProgram.getMemory().getBytes(datAddr, bytes);
+            long val = (bytes[0] & 0xFFL) | ((bytes[1] & 0xFFL) << 8) |
+                       ((bytes[2] & 0xFFL) << 16) | ((bytes[3] & 0xFFL) << 24);
+            output.append(String.format("DAT_ff8ed984 = 0x%08X (encode state struct base)\n", val));
+
+            // Also read the function pointer at DAT_ff8ed984+0x6c
+            Address fpAddr = toAddr(val + 0x6CL);
+            byte[] fpBytes = new byte[4];
+            currentProgram.getMemory().getBytes(fpAddr, fpBytes);
+            long fpVal = (fpBytes[0] & 0xFFL) | ((fpBytes[1] & 0xFFL) << 8) |
+                         ((fpBytes[2] & 0xFFL) << 16) | ((fpBytes[3] & 0xFFL) << 24);
+            output.append(String.format("*(DAT_ff8ed984 + 0x6C) = 0x%08X (non-first-chunk write handler)\n", fpVal));
+        } catch (Exception e) {
+            output.append("Could not read DAT_ff8ed984: " + e.getMessage() + "\n");
+        }
+        output.append("\n\n");
+
+        // Decompile all primary targets with recursive callee expansion
+        for (long addr : PRIMARY_TARGETS) {
+            decompileAt(addr, 0);
+        }
+
+        // Cross-reference section: who calls GiveSemaphore?
+        output.append("\n\n=======================================================================\n");
+        output.append("CROSS-REFERENCE: All callers of GiveSemaphore (0xFF827584)\n");
+        output.append("=======================================================================\n");
+        printCallers(0xFF827584L);
+
+        // Cross-reference: who calls TakeSemaphore?
+        output.append("\n=======================================================================\n");
+        output.append("CROSS-REFERENCE: All callers of TakeSemaphore (0xFF8274C4)\n");
+        output.append("=======================================================================\n");
+        printCallers(0xFF8274C4L);
+
+        // Cross-reference: who calls the event flag set (0xFF869508)?
+        output.append("\n=======================================================================\n");
+        output.append("CROSS-REFERENCE: All callers of event flag set (0xFF869508)\n");
+        output.append("=======================================================================\n");
+        printCallers(0xFF869508L);
+
+        // Cross-reference: who calls FUN_ff8eda90 (the write trigger)?
+        output.append("\n=======================================================================\n");
+        output.append("CROSS-REFERENCE: All callers of FUN_ff8eda90 (write/DMA trigger)\n");
+        output.append("=======================================================================\n");
+        printCallers(0xFF8EDA90L);
+
+        // Summary
+        output.append(String.format("\n\n=== SUMMARY: %d functions decompiled, %d failed ===\n",
+                      successCount, failCount));
+
+        // Write output
+        String outDir = getSourceFile().getParentFile().getAbsolutePath();
+        String outPath = outDir + File.separator + "write_pipeline_decompiled.txt";
+        PrintWriter pw = new PrintWriter(new FileWriter(outPath));
+        pw.print(output.toString());
+        pw.close();
+
+        decomp.dispose();
+        printf("Wrote %d chars (%d functions, %d failed) to %s%n",
+               output.length(), successCount, failCount, outPath);
+    }
+
+    private void decompileAt(long addr, int depth) {
+        if (visited.contains(addr)) return;
+        if (depth > MAX_DEPTH) return;
+        visited.add(addr);
+
+        Address address = toAddr(addr);
+        FunctionManager fm = currentProgram.getFunctionManager();
+        Function func = fm.getFunctionAt(address);
+
+        if (func == null) {
+            output.append(String.format("\n// No function at 0x%08X (depth=%d)\n", addr, depth));
+            failCount++;
+            return;
+        }
+
+        // Header
+        String indent = depth == 0 ? "========" : (depth == 1 ? "--------" : "........");
+        output.append("\n\n");
+        output.append(indent + indent + indent + indent + indent + "\n");
+        output.append(String.format("Function: %s @ 0x%08X (size=%d bytes, depth=%d)\n",
+                      func.getName(), addr, func.getBody().getNumAddresses(), depth));
+        output.append(indent + indent + indent + indent + indent + "\n");
+
+        // Callers (cross-references TO this function)
+        Set<Function> callers = func.getCallingFunctions(monitor);
+        if (!callers.isEmpty()) {
+            output.append("// Called from:\n");
+            int shown = 0;
+            for (Function caller : callers) {
+                if (shown >= 15) {
+                    output.append(String.format("//   ... and %d more callers\n", callers.size() - shown));
+                    break;
+                }
+                output.append(String.format("//   0x%s (%s)\n",
+                    caller.getEntryPoint(), caller.getName()));
+                shown++;
+            }
+        }
+
+        // Callees (cross-references FROM this function)
+        Set<Function> callees = func.getCalledFunctions(monitor);
+        if (!callees.isEmpty()) {
+            output.append("// Calls:\n");
+            for (Function callee : callees) {
+                output.append(String.format("//   0x%s (%s)\n",
+                    callee.getEntryPoint(), callee.getName()));
+            }
+        }
+        output.append("\n");
+
+        // Decompile
+        DecompileResults results = decomp.decompileFunction(func, 60, monitor);
+        if (results == null || !results.decompileCompleted()) {
+            output.append(String.format("// DECOMPILATION FAILED: %s\n",
+                results != null ? results.getErrorMessage() : "null result"));
+            failCount++;
+            return;
+        }
+
+        String cCode = results.getDecompiledFunction().getC();
+        output.append(cCode);
+        successCount++;
+
+        // Scan for function pointer loads (LDR Rx, =0xFFxxxxxx patterns in data references)
+        scanFunctionPointers(func);
+
+        // Recurse into callees (skip OS primitives at depth > 0)
+        if (depth < MAX_DEPTH) {
+            for (Function callee : callees) {
+                long calleeAddr = callee.getEntryPoint().getOffset();
+                // Only follow firmware functions (0xFF8xxxxx range)
+                if (calleeAddr < 0xFF800000L) continue;
+                // Don't recurse into OS primitives (but we do decompile their body at depth 0)
+                if (depth > 0 && OS_PRIMITIVES.contains(calleeAddr)) continue;
+                decompileAt(calleeAddr, depth + 1);
+            }
+        }
+    }
+
+    private void scanFunctionPointers(Function func) {
+        // Look for data references that might be function pointers
+        try {
+            InstructionIterator instIter =
+                currentProgram.getListing().getInstructions(func.getBody(), true);
+            Set<String> ptrs = new TreeSet<>();
+            while (instIter.hasNext()) {
+                Instruction inst = instIter.next();
+                Reference[] refs = inst.getReferencesFrom();
+                for (Reference ref : refs) {
+                    if (ref.getReferenceType().isData()) {
+                        long target = ref.getToAddress().getOffset();
+                        // Check if this data address contains a function pointer
+                        if (target >= 0xFF800000L && target < 0xFFF00000L) {
+                            try {
+                                byte[] bytes = new byte[4];
+                                currentProgram.getMemory().getBytes(ref.getToAddress(), bytes);
+                                long val = (bytes[0] & 0xFFL) | ((bytes[1] & 0xFFL) << 8) |
+                                           ((bytes[2] & 0xFFL) << 16) | ((bytes[3] & 0xFFL) << 24);
+                                if (val >= 0xFF800000L && val < 0xFFF00000L) {
+                                    FunctionManager fm = currentProgram.getFunctionManager();
+                                    Function fpFunc = fm.getFunctionAt(toAddr(val));
+                                    String name = fpFunc != null ? fpFunc.getName() : "unknown";
+                                    ptrs.add(String.format("DAT_%08x = 0x%08X (%s)",
+                                             target, val, name));
+                                }
+                            } catch (Exception e) { /* ignore read errors */ }
+                        }
+                    }
+                }
+            }
+            if (!ptrs.isEmpty()) {
+                output.append("// Function pointer references found:\n");
+                for (String p : ptrs) {
+                    output.append("//   " + p + "\n");
+                }
+            }
+        } catch (Exception e) {
+            output.append("// Error scanning function pointers: " + e.getMessage() + "\n");
+        }
+    }
+
+    private void printCallers(long addr) {
+        Address address = toAddr(addr);
+        FunctionManager fm = currentProgram.getFunctionManager();
+        ReferenceIterator refIter = currentProgram.getReferenceManager().getReferencesTo(address);
+        int count = 0;
+        while (refIter.hasNext()) {
+            Reference ref = refIter.next();
+            Function caller = fm.getFunctionContaining(ref.getFromAddress());
+            String callerName = caller != null ? caller.getName() : "unknown";
+            output.append(String.format("  0x%s in %s (type=%s)\n",
+                ref.getFromAddress(), callerName, ref.getReferenceType()));
+            count++;
+        }
+        if (count == 0) {
+            output.append("  (no references found)\n");
+        }
+        output.append(String.format("  Total: %d references\n", count));
+    }
+}

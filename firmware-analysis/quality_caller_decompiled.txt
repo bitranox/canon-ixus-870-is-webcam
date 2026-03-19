@@ -1,0 +1,150 @@
+==========================================================================
+JPCORE Quality Setter Caller Analysis
+Goal: Find what function contains BL at 0xFF824AD8 -> FUN_ff849408
+==========================================================================
+
+##########################################################################
+# Function containing BL at 0xff824ad8
+##########################################################################
+
+Function: FUN_ff824a64
+Entry: ff824a64
+Size: 136 bytes
+Signature: undefined FUN_ff824a64()
+
+--- CALLERS OF THIS FUNCTION ---
+  UNCONDITIONAL_CALL from ff87b6c8 in FUN_ff87b58c (ff87b58c)
+  UNCONDITIONAL_CALL from ff8299fc in FUN_ff8299e0 (ff8299e0)
+  Total: 2
+
+--- CALLEES FROM THIS FUNCTION ---
+  ff824a74 -> ff86ea98 = FUN_ff86ea98 (ff86ea98)
+  ff824a78 -> ff826bfc = FUN_ff826bfc (ff826bfc)
+  ff824a84 -> ff865f68 = FUN_ff865f68 (ff865f68)
+  ff824a88 -> ff865b24 = FUN_ff865b24 (ff865b24)
+  ff824a90 -> ff865b40 = FUN_ff865b40 (ff865b40)
+  ff824a94 -> ff864b90 = FUN_ff864b90 (ff864b90)
+  ff824a98 -> ff860f78 = FUN_ff860f78 (ff860f78)
+  ff824aa0 -> ff864d44 = FUN_ff864d44 (ff864d44)
+  ff824ac0 -> ff865dfc = FUN_ff865dfc (ff865dfc)
+  ff824ad0 -> ff81b1cc = default (ff81b1cc)
+  ff824ad8 -> ff849408 = XREF_JPCORELiteral_FUN_ff849408 (ff849408)
+  Total: 11
+
+--- DECOMPILED CODE ---
+
+void FUN_ff824a64(undefined4 param_1)
+
+{
+  undefined4 uVar1;
+  int iVar2;
+  undefined4 uStack_c;
+  
+  uStack_c = param_1;
+  FUN_ff86ea98(0x120,s_StartupZoom_ff824c40);
+  iVar2 = FUN_ff826bfc();
+  if (iVar2 == 0) {
+    FUN_ff865f68();
+    FUN_ff865b24();
+    FUN_ff865b40(1);
+    FUN_ff864b90();
+    FUN_ff860f78();
+    FUN_ff864d44(&uStack_c);
+    uVar1 = DAT_ff824c4c;
+    iVar2 = FUN_ff865dfc(*(undefined4 *)(DAT_ff82475c + 4),1,DAT_ff824bcc,s_ShootSeqAPI_c_ff8246f0,
+                         DAT_ff824c4c);
+    if (iVar2 != 0) {
+      switchD_ff8443f8::default(s_ShootSeqAPI_c_ff8246f0,uVar1);
+    }
+    XREF_JPCORELiteral_FUN_ff849408(0xe);
+    *(undefined4 *)(DAT_ff824700 + 0x3c) = 1;
+  }
+  return;
+}
+
+
+
+
+##########################################################################
+# FUN_ff849408 - JPCORE Quality Setter (for reference)
+##########################################################################
+
+Function: XREF_JPCORELiteral_FUN_ff849408
+Entry: ff849408
+Signature: undefined XREF_JPCORELiteral_FUN_ff849408()
+
+--- ALL CALLERS (Ghidra cross-references) ---
+  UNCONDITIONAL_CALL from ff824ad8 in FUN_ff824a64 (ff824a64)
+  Total: 1
+
+--- DECOMPILED CODE ---
+
+void XREF_JPCORELiteral_FUN_ff849408(int param_1)
+
+{
+  if (param_1 == -1) {
+    param_1 = -1;
+  }
+  else {
+    param_1 = param_1 + 1;
+  }
+  *(int *)(DAT_ff84924c + 0x14) = param_1;
+  return;
+}
+
+
+
+##########################################################################
+# FUN_ff8496a8 - JPCORE Init (sets quality to -1)
+##########################################################################
+
+Function: XREF_JPCORELiteral_FUN_ff8496a8
+Entry: ff8496a8
+
+--- ALL CALLERS ---
+  UNCONDITIONAL_CALL from ff8f8fdc in XREF_PS3_Base_FUN_ff8f8fc8 (ff8f8fc8)
+  UNCONDITIONAL_JUMP from ffaa3c28 in FUN_ffaa3c1c (ffaa3c1c)
+  UNCONDITIONAL_CALL from ffaa3c34 in (unknown)
+  Total: 3
+
+--- DECOMPILED CODE ---
+
+void XREF_JPCORELiteral_FUN_ff8496a8(void)
+
+{
+  int *piVar1;
+  int iVar2;
+  int iVar3;
+  int iVar4;
+  
+  piVar1 = DAT_ff84924c;
+  if (*DAT_ff84924c != 0) {
+    switchD_ff8443f8::default(DAT_ff849784,DAT_ff849780);
+  }
+  FUN_ffad1ad4(DAT_ff84923c,5);
+  iVar3 = DAT_ff849768;
+  iVar4 = 0;
+  do {
+    iVar2 = FUN_ff848f50(iVar4);
+    if (iVar2 == 0) {
+      *(undefined4 *)(iVar3 + iVar4 * 4) = 1;
+    }
+    else {
+      *(undefined4 *)(iVar3 + iVar4 * 4) = 0;
+    }
+    iVar4 = iVar4 + 1;
+  } while (iVar4 < 5);
+  iVar3 = FUN_ff827928(0,1);
+  piVar1[7] = iVar3;
+  piVar1[5] = -1;
+  *piVar1 = 1;
+  piVar1[2] = 0;
+  piVar1[6] = -1;
+  piVar1[9] = 0;
+  piVar1[8] = 0;
+  return;
+}
+
+
+
+=== END ===

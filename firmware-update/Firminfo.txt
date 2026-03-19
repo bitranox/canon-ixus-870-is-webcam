@@ -1,0 +1,15 @@
+----------------------------
+[Firmware File Name]
+IXY_920.FI2
+
+[Camera Model Name(s)]
+Canon IXY DIGITAL 920 IS
+Canon PowerShot SD880 IS
+Canon DIGITAL IXUS 870 IS
+
+[Firmware Version]
+1.0.1.0
+
+[CF Capacity (KB)]
+2500
+----------------------------
