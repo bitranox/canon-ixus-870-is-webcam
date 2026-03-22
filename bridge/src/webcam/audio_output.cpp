@@ -130,9 +130,14 @@ bool AudioOutput::init(uint32_t sample_rate, uint16_t channels, uint16_t bits) {
 void AudioOutput::write(const uint8_t* data, size_t size) {
     if (!initialized_ || !data || size == 0) return;
 
-    // Input: mono 16-bit PCM (2 bytes per sample)
+    // Input: mono 16-bit PCM at 44100Hz (2 bytes per sample)
+    const int16_t* src = reinterpret_cast<const int16_t*>(data);
     uint32_t input_samples = static_cast<uint32_t>(size / 2);
     if (input_samples == 0) return;
+
+    // Resample 44100→device rate (nearest neighbor) + mono→stereo
+    uint32_t output_frames = (uint32_t)((uint64_t)input_samples * impl_->sample_rate / 44100);
+    if (output_frames == 0) return;
 
     // Check available space
     UINT32 padding = 0;
@@ -140,37 +145,37 @@ void AudioOutput::write(const uint8_t* data, size_t size) {
     if (FAILED(hr)) return;
 
     uint32_t available = impl_->buffer_frames - padding;
-    uint32_t frames = input_samples;
-    if (frames > available) frames = available;
-    if (frames == 0) return;
+    if (output_frames > available) output_frames = available;
+    if (output_frames == 0) return;
 
     BYTE* buf = nullptr;
-    hr = impl_->render->GetBuffer(frames, &buf);
+    hr = impl_->render->GetBuffer(output_frames, &buf);
     if (FAILED(hr) || !buf) return;
 
-    // Convert mono 16-bit → device format (typically stereo 32-bit float)
-    const int16_t* src = reinterpret_cast<const int16_t*>(data);
     if (impl_->block_align == 8 && impl_->channels == 2) {
-        // Stereo 32-bit float (most common WASAPI shared mode format)
+        // Stereo 32-bit float — most common WASAPI shared mode
         float* dst = reinterpret_cast<float*>(buf);
-        for (uint32_t i = 0; i < frames; i++) {
-            float sample = src[i] / 32768.0f;
-            dst[i * 2] = sample;     // left
-            dst[i * 2 + 1] = sample; // right
+        for (uint32_t i = 0; i < output_frames; i++) {
+            uint32_t src_idx = (uint32_t)((uint64_t)i * 44100 / impl_->sample_rate);
+            if (src_idx >= input_samples) src_idx = input_samples - 1;
+            float sample = src[src_idx] / 32768.0f;
+            dst[i * 2] = sample;
+            dst[i * 2 + 1] = sample;
         }
     } else if (impl_->block_align == 4 && impl_->channels == 2) {
         // Stereo 16-bit PCM
         int16_t* dst = reinterpret_cast<int16_t*>(buf);
-        for (uint32_t i = 0; i < frames; i++) {
-            dst[i * 2] = src[i];     // left
-            dst[i * 2 + 1] = src[i]; // right
+        for (uint32_t i = 0; i < output_frames; i++) {
+            uint32_t src_idx = (uint32_t)((uint64_t)i * 44100 / impl_->sample_rate);
+            if (src_idx >= input_samples) src_idx = input_samples - 1;
+            dst[i * 2] = src[src_idx];
+            dst[i * 2 + 1] = src[src_idx];
         }
     } else {
-        // Fallback: zero-fill (unknown format)
-        memset(buf, 0, frames * impl_->block_align);
+        memset(buf, 0, output_frames * impl_->block_align);
     }
 
-    impl_->render->ReleaseBuffer(frames, 0);
+    impl_->render->ReleaseBuffer(output_frames, 0);
 }
 
 void AudioOutput::shutdown() {
