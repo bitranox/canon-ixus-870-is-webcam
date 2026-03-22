@@ -197,6 +197,9 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
         spy_cache_invalidate(ptr, size);
 
         // Prevent SD card writes: clear task_MovWrite's is_open flag.
+        // 0x89E8 = ring buffer struct (0x8968) + 0x80.
+        // task_MovWrite checks this before every file write; when 0,
+        // it skips the write but still updates the consumed pointer.
         *(volatile unsigned int *)0x89E8 = 0;
 
         // Clear drain mode so task_MovWrite processes frame messages normally.

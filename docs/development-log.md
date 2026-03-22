@@ -3931,3 +3931,54 @@ At 11025 Hz mono 16-bit, audio per frame = ~735 bytes. Combined with video (~40K
 | `firmware-analysis/sio_interrupt_decompiled.txt` | Decompiled: SIO handlers, AudioTsk callbacks |
 | `firmware-analysis/ReadAudioAddresses.java` | Ghidra script: ROM data value reader |
 | `firmware-analysis/audio_addresses.txt` | ROM→RAM address mappings for audio structs |
+
+### Key Discovery: +0x80=2 Trick (2026-03-22)
+
+task_MovWrite case handlers check `+0x80` with DIFFERENT conditions:
+
+| Handler | Check | +0x80=0 (v35e) | +0x80=1 (normal) | +0x80=2 (trick) |
+|---------|-------|----------------|-------------------|-----------------|
+| case 2 (video write) | `== 1` | skip write, update consumed ✓ | write to file | skip write, update consumed ✓ |
+| cases 4/5/6 (audio) | `!= 0` | skip entirely ✗ | process audio ✓ | process audio ✓ |
+| drain cleanup | `== 1` | skip ✓ | run cleanup | skip ✓ |
+
+**+0x80=2 gives the best of both worlds** for video: case 2 skips the SD write (2 != 1) while audio handlers could theoretically run (2 != 0). Video confirmed working at 30fps for 10+ seconds with zero SD writes.
+
+### Experiments Tried (2026-03-22)
+
+| # | Approach | Video | Audio | Notes |
+|---|----------|-------|-------|-------|
+| 1 | +0x80=0 (v35e baseline) | ✓ 30fps | Dead | Cases 4/5/6 skipped |
+| 2 | +0x80=1, drain, consumed=write_ptr | 2s then dies | Not tested | Drain cleanup loop kills pipeline |
+| 3 | +0x80=1, clear error flags | ✓ | Dead | Error drain catches audio msgs |
+| 4 | Skip sub_FF9300B4 | Crash | N/A | Consumed pointer never advances |
+| 5 | Skip sub_FF9300B4 + manual consumed | Crash | N/A | Wrong params to sub_FF9300B4 |
+| 6 | Call FUN_ff92ee90 directly | Crash | N/A | Wrong task context |
+| 7 | +0x80=2, fd=-1 | ✓ 30fps | Dead | Audio cases never receive messages |
+| 8 | +0x80=2, fd=0 | ✓ 30fps | Dead | fd=0 works (no errors) |
+| 9 | +0x80=2, fd=0, +0x38=1 | ✓ 30fps | Dead | +0x38 not the audio trigger |
+| 10 | +0x80=1, drain, consumed=ptr | 1.4s then dies | Not tested | Drain cleanup loop |
+| 11 | Bogus path "Z/..." | Crash | N/A | Invalid drive letter |
+| 12 | Bogus path "A/CHDK" | 509 corrupt frames | N/A | Corrupted FAT directory |
+| 13 | +0x80=2, direct init fn calls | ✓ 30fps | Dead | Init fns safe but insufficient |
+| 14 | SD writes enabled (reference) | ✓ 30fps | ✓ Alive | Only working audio config |
+
+### Ring Buffer Struct Comparison (0x8968)
+
+Dump at frame 60 comparing +0x80=2 (no audio) vs SD writes enabled (audio alive):
+
+| Offset | +0x80=2 | SD writes | Meaning |
+|--------|---------|-----------|---------|
+| +0x48 | -1 (0xFFFFFFFF) | 3 | File descriptor |
+| +0x80 | 2 | 1 | is_open flag |
+| +0x38 | 0 | 1 | Unknown state flag |
+| +0x6C | 0x15888 (88200) | 0x2B110 (176400) | Buffer size (1s mono vs 1s stereo) |
+| +0x9C | 0xAC44 (44100) | 0xAC44 (44100) | Audio sample rate |
+| +0xA0 | 2 | 2 | Channels (stereo) |
+| +0xA4 | 4 | 4 | Bytes per sample (2ch × 16bit) |
+
+### Conclusion: Audio Producer Needs Full File I/O Pipeline
+
+The audio producer only runs when the full recording pipeline is active (including file creation by case 1). The "audio buffer at 0x50000" found in the SD-writes-enabled scan was a false positive — likely FAT filesystem metadata that changes during file I/O, not PCM audio data.
+
+**Next step:** Deep RE of the SIO interrupt handler chain to find where the firmware accumulates PCM samples from the WM1400 codec. The audio hardware IS running (registers confirm active state), but the firmware path from SIO register reads → RAM buffer has not been traced.
