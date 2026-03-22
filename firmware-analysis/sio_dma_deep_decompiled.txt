@@ -1,0 +1,319 @@
+========================================================================
+Deep SIO/Audio DMA RE — Find PCM Sample Accumulation Path
+Firmware: IXUS 870 IS / SD 880 IS, version 1.01a
+========================================================================
+
+=== References to 0xC0220080 (SIO data register) ===
+
+  ROM 0xFFB53C88 contains 0xC0220080 (in unknown)
+
+Total references to 0xC0220080: 1
+
+=== References to 0xC0220050 (SIO ch1 data register) ===
+
+  ROM 0xFFB53CA0 contains 0xC0220050 (in unknown)
+
+Total references to 0xC0220050: 1
+
+=== Interrupt registrations near AudioIC code ===
+
+  Audio-area ISR registration: FUN_ff846500 @ 0xFF846500
+
+void FUN_ff846500(void)
+
+{
+  int iVar1;
+  undefined4 uVar2;
+  uint uVar3;
+  undefined4 unaff_r4;
+  undefined2 *unaff_r5;
+  
+  *(undefined4 *)(unaff_r5 + 8) = unaff_r4;
+  *unaff_r5 = (short)unaff_r4;
+  unaff_r5[1] = (short)unaff_r4;
+  *(undefined4 *)(unaff_r5 + 10) = unaff_r4;
+  *(undefined4 *)(unaff_r5 + 0xc) = unaff_r4;
+  *(undefined4 *)(unaff_r5 + 0xe) = unaff_r4;
+  uVar2 = FUN_ff827928(0,0);
+  *(undefined4 *)(unaff_r5 + 6) = uVar2;
+  iVar1 = DAT_ff84657c;
+  *(undefined4 *)(DAT_ff84657c + 0x104) = 2;
+  *(undefined4 *)(iVar1 + 0x114) = unaff_r4;
+  *(undefined4 *)(iVar1 + 0x110) = unaff_r4;
+  *(undefined4 *)(iVar1 + 0x108) = unaff_r4;
+  *(undefined4 *)(iVar1 + 0x104) = 1;
+  *(undefined4 *)(iVar1 + 0x100) = unaff_r4;
+  *(undefined4 *)(iVar1 + 0x108) = 1;
+  uVar3 = FUN_ff81ae8c(0,0xe,&LAB_ff846304,0);
+  if ((uVar3 & 1) != 0) {
+    switchD_ff8443f8::default(s_JogDial_c_ff846590,DAT_ff8465a8);
+  }
+  *(undefined4 *)(unaff_r5 + 2) = 1;
+  return;
+}
+
+
+
+  Audio-area ISR registration: FUN_ff842824 @ 0xFF842824
+
+undefined8 FUN_ff842824(undefined4 param_1,undefined4 param_2,undefined4 param_3,undefined4 param_4)
+
+{
+  int iVar1;
+  undefined4 *puVar2;
+  int iVar3;
+  undefined4 uVar4;
+  undefined4 uVar5;
+  int iVar6;
+  uint *puVar7;
+  undefined4 *puVar8;
+  uint *puVar9;
+  uint *puVar10;
+  uint *puVar11;
+  byte *pbVar12;
+  uint uVar13;
+  byte bVar14;
+  int iVar15;
+  int iVar16;
+  int iVar17;
+  int iVar18;
+  byte bVar19;
+  uint uVar20;
+  uint uVar21;
+  uint uVar22;
+  uint uVar23;
+  bool bVar24;
+  bool bVar25;
+  uint local_28;
+  
+  local_28 = 0x8c;
+  uVar4 = FUN_ff8278e0(0,10,param_3,param_4,param_2,param_3);
+  uVar5 = DAT_ff842b74;
+  puVar2 = DAT_ff842b70;
+  iVar15 = 0;
+  DAT_ff842b70[2] = uVar4;
+  do {
+    FUN_ff8279ec(puVar2[2],puVar2[1] + iVar15 * 0x30,uVar5,s_SioDrv_c_ff842b78,0x1a4);
+    iVar15 = iVar15 + 1;
+  } while (iVar15 < 10);
+  FUN_ff866d34(0x200000);
+  *(undefined4 *)(DAT_ff842b84 + 0x10) = 0;
+  iVar3 = DAT_ff842b88;
+  iVar1 = DAT_ff842b6c;
+  iVar15 = DAT_ff842b68;
+  iVar16 = 0;
+  iVar17 = DAT_ff842b68 + -0x20;
+  iVar18 = DAT_ff842b88 + 8;
+  do {
+    *(undefined1 *)(iVar3 + iVar16) = 0;
+    uVar5 = FUN_ff827928(0,1);
+    *(undefined4 *)(iVar17 + iVar16 * 4) = uVar5;
+    uVar5 = FUN_ff827928(0,0);
+    *(undefined4 *)(iVar15 + iVar16 * 4) = uVar5;
+    FUN_ff81ae8c(0,*(undefined4 *)(iVar1 + iVar16 * 4),&LAB_ff842754);
+    puVar8 = *(undefined4 **)(iVar18 + iVar16 * 0x18);
+    if (puVar8 != (undefined4 *)0xffffffff) {
+      iVar6 = iVar18 + iVar16 * 0x18;
+      *(undefined4 *)(iVar6 + 4) = *puVar8;
+      *(undefined4 *)(iVar6 + 0xc) = **(undefined4 **)(iVar6 + 8);
+      if (*(undefined4 **)(iVar6 + 0x10) != (undefined4 *)0xffffffff) {
+        *(undefined4 *)(iVar6 + 0x14) = **(undefined4 **)(iVar6 + 0x10);
+      }
+      **(undefined4 **)(DAT_ff842b64 + iVar16 * 0x34 + 8) = 1;
+    }
+    bVar14 = LAB_ff842794;
+    iVar16 = iVar16 + 1;
+  } while (iVar16 < 8);
+  puVar7 = (uint *)*puVar2;
+  puVar9 = (uint *)&LAB_ff842794;
+  uVar20 = (uint)puVar7 & 3;
+  uVar21 = uVar20;
+  if (uVar20 != 0) {
+    puVar10 = (uint *)0xff842795;
+    if (uVar20 < 3) {
+      puVar10 = (uint *)0xff842796;
+      uVar21 = (uint)bRamff842795;
+    }
+    *(byte *)puVar7 = LAB_ff842794;
+    puVar9 = puVar10;
+    if (uVar20 < 2) {
+      puVar9 = (uint *)((int)puVar10 + 1);
+      bVar14 = (byte)*puVar10;
+    }
+    puVar10 = (uint *)((int)puVar7 + 1);
+    if (uVar20 < 3) {
+      puVar10 = (uint *)((int)puVar7 + 2);
+      *(byte *)((int)puVar7 + 1) = (byte)uVar21;
+    }
+    local_28 = uVar20 + 0x88;
+    puVar7 = puVar10;
+    if (uVar20 < 2) {
+      puVar7 = (uint *)((int)puVar10 + 1);
+      *(byte *)puVar10 = bVar14;
+    }
+  }
+  uVar20 = (uint)puVar9 & 3;
+  if (uVar20 == 0) {
+    bVar24 = 0x1f < local_28;
+    uVar13 = local_28 - 0x20;
+    if (bVar24) {
+      do {
+        if (bVar24) {
+          uVar21 = puVar9[1];
+          uVar20 = puVar9[2];
+          uVar22 = puVar9[3];
+          *puVar7 = *puVar9;
+          puVar7[1] = uVar21;
+          puVar7[2] = uVar20;
+          puVar7[3] = uVar22;
+          uVar20 = puVar9[4];
+          uVar21 = puVar9[5];
+          uVar22 = puVar9[6];
+          uVar23 = puVar9[7];
+          puVar9 = puVar9 + 8;
+          puVar7[4] = uVar20;
+          puVar7[5] = uVar21;
+          puVar7[6] = uVar22;
+          puVar7[7] = uVar23;
+          puVar7 = puVar7 + 8;
+          bVar24 = 0x1f < uVar13;
+          uVar13 = uVar13 - 0x20;
+        }
+      } while (bVar24);
+    }
+    puVar10 = puVar7;
+    if ((bool)((byte)(uVar13 >> 4) & 1)) {
+      uVar20 = *puVar9;
+      uVar21 = puVar9[1];
+      uVar22 = puVar9[2];
+      uVar23 = puVar9[3];
+      puVar9 = puVar9 + 4;
+      *puVar7 = uVar20;
+      puVar7[1] = uVar21;
+      puVar7[2] = uVar22;
+      puVar7[3] = uVar23;
+      puVar10 = puVar7 + 4;
+    }
+    if ((int)(uVar13 << 0x1c) < 0) {
+      uVar20 = *puVar9;
+      uVar21 = puVar9[1];
+      puVar9 = puVar9 + 2;
+      *puVar10 = uVar20;
+      puVar10[1] = uVar21;
+      puVar10 = puVar10 + 2;
+    }
+    uVar21 = uVar13 << 0x1e;
+    puVar7 = puVar10;
+    if ((bool)((byte)(uVar13 >> 2) & 1)) {
+      uVar20 = *puVar9;
+      puVar7 = puVar10 + 1;
+      *puVar10 = uVar20;
+      puVar9 = puVar9 + 1;
+    }
+    if (uVar21 == 0) {
+      return CONCAT44(puVar9,puVar7);
+    }
+  }
+  else {
+    uVar13 = local_28 - 4;
+    if (3 < local_28) {
+      puVar9 = (uint *)((int)puVar9 - uVar20);
+      uVar21 = *puVar9;
+      puVar10 = puVar7;
+      if (uVar20 == 2) {
+        do {
+          puVar11 = puVar9;
+          uVar20 = uVar21 >> 0x10;
+          puVar9 = puVar11 + 1;
+          uVar21 = *puVar9;
+          bVar24 = 3 < uVar13;
+          uVar13 = uVar13 - 4;
+          uVar20 = uVar20 | uVar21 << 0x10;
+          puVar7 = puVar10 + 1;
+          *puVar10 = uVar20;
+          puVar10 = puVar7;
+        } while (bVar24);
+        puVar9 = (uint *)((int)puVar11 + 6);
+      }
+      else if (uVar20 < 3) {
+        do {
+          puVar11 = puVar9;
+          uVar20 = uVar21 >> 8;
+          puVar9 = puVar11 + 1;
+          uVar21 = *puVar9;
+          bVar24 = 3 < uVar13;
+          uVar13 = uVar13 - 4;
+          uVar20 = uVar20 | uVar21 << 0x18;
+          puVar7 = puVar10 + 1;
+          *puVar10 = uVar20;
+          puVar10 = puVar7;
+        } while (bVar24);
+        puVar9 = (uint *)((int)puVar11 + 5);
+      }
+      else {
+        do {
+          puVar11 = puVar9;
+          uVar20 = uVar21 >> 0x18;
+          puVar9 = puVar11 + 1;
+          uVar21 = *puVar9;
+          bVar24 = 3 < uVar13;
+          uVar13 = uVar13 - 4;
+          uVar20 = uVar20 | uVar21 << 8;
+          puVar7 = puVar10 + 1;
+          *puVar10 = uVar20;
+          puVar10 = puVar7;
+        } while (bVar24);
+        puVar9 = (uint *)((int)puVar11 + 7);
+      }
+    }
+  }
+  bVar19 = (byte)uVar21;
+  bVar14 = (byte)uVar20;
+  bVar25 = (bool)((byte)(uVar13 >> 1) & 1);
+  uVar13 = uVar13 << 0x1f;
+  bVar24 = (int)uVar13 < 0;
+  puVar10 = puVar9;
+  if (bVar24) {
+    puVar10 = (uint *)((int)puVar9 + 1);
+    uVar13 = (uint)(byte)*puVar9;
+  }
+  if (bVar25) {
+    pbVar12 = (byte *)((int)puVar10 + 1);
+    bVar14 = (byte)*puVar10;
+    puVar10 = (uint *)((int)puVar10 + 2);
+    bVar19 = *pbVar12;
+  }
+  puVar9 = puVar7;
+  if (bVar24) {
+    puVar9 = (uint *)((int)puVar7 + 1);
+    *(byte *)puVar7 = (byte)uVar13;
+  }
+  if (bVar25) {
+    pbVar12 = (byte *)((int)puVar9 + 1);
+    *(byte *)puVar9 = bVar14;
+    puVar9 = (uint *)((int)puVar9 + 2);
+    *pbVar12 = bVar19;
+  }
+  return CONCAT44(puVar10,puVar9);
+}
+
+
+
+=== All 0xC022xxxx register references in audio code ===
+
+  0xFF84266C: 0xC0220000 (unknown)
+  0xFF842B84: 0xC0223000 (unknown)
+  0xFF84391C: 0xC022F000 (unknown)
+  0xFF84410C: 0xC0223000 (unknown)
+  0xFF844464: 0xC0220000 (unknown)
+  0xFF8452AC: 0xC0220000 (unknown)
+  0xFF845450: 0xC0224000 (unknown)
+  0xFF84545C: 0xC0223000 (unknown)
+  0xFF845D60: 0xC0220000 (unknown)
+  0xFF84620C: 0xC02200F8 (unknown)
+  0xFF846210: 0xC02200FC (unknown)
+  0xFF846214: 0xC022301C (unknown)
+  0xFF846218: 0xC0223024 (unknown)
+  0xFF8462EC: 0xC0220000 (unknown)
+  0xFF846300: 0xC0223000 (unknown)
+  0xFF846834: 0xC0220000 (unknown)

@@ -1,0 +1,594 @@
+========================================================================
+SIO Interrupt Handler — PCM Sample Path
+Firmware: IXUS 870 IS / SD 880 IS, version 1.01a
+========================================================================
+
+=== SIO Channel Data Table (0xFFB53C80-0xFFB53D00) ===
+
+  0xFFB53C88 = 0xC0220080  (I/O reg)
+  0xFFB53C90 = 0xC0220084  (I/O reg)
+  0xFFB53C98 = 0xFFFFFFFF
+  0xFFB53CA0 = 0xC0220050  (I/O reg)
+  0xFFB53CA8 = 0xC0220054  (I/O reg)
+  0xFFB53CB0 = 0xFFFFFFFF
+  0xFFB53CB8 = 0xC0220030  (I/O reg)
+  0xFFB53CC0 = 0xC0220034  (I/O reg)
+  0xFFB53CC8 = 0xFFFFFFFF
+  0xFFB53CD0 = 0xFFFFFFFF
+  0xFFB53CD8 = 0xFFFFFFFF
+  0xFFB53CE0 = 0xFFFFFFFF
+  0xFFB53CE8 = 0xC0220000  (I/O reg)
+  0xFFB53CF0 = 0xC0220004  (I/O reg)
+  0xFFB53CF8 = 0xC0220008  (I/O reg)
+
+=== SIO Driver ROM Constants ===
+
+  DAT_FF842B64 = 0xFFAD6C98
+  DAT_FF842B68 = 0x00012728
+  DAT_FF842B6C = 0xFFAD6E38
+  DAT_FF842B70 = 0x00002218
+  DAT_FF842B74 = 0x00002710
+  DAT_FF842B78 = 0x446F6953
+  DAT_FF842B84 = 0xC0223000
+  DAT_FF842B88 = 0x00002228
+  DAT_FF842B8C = 0x00002230
+
+========================================================================
+Function 1/10: LAB_ff842754 — SIO ISR (audio sample receive)
+Address: 0xFF842754
+========================================================================
+Ghidra name: FUN_ff842754
+Size: 40 bytes
+
+
+undefined4 FUN_ff842754(int param_1)
+
+{
+  int iVar1;
+  uint uVar2;
+  
+  **(undefined4 **)(DAT_ff842b64 + param_1 * 0x34 + 0x10) = 0;
+  uVar2 = *(uint *)(DAT_ff842b68 + param_1 * 4);
+  if (((uVar2 & 1) - 1 & uVar2) != 0) {
+    iVar1 = FUN_ff812340(uVar2 >> 1);
+    if (iVar1 == -1) {
+      switchD_ff8443f8::default(s_KerSem_c_ff827564,DAT_ff827620);
+    }
+    return 0;
+  }
+  return 7;
+}
+
+
+
+========================================================================
+Function 2/10: FUN_ff842824 — SIO driver init
+Address: 0xFF842824
+========================================================================
+Ghidra name: FUN_ff842824
+Size: 320 bytes
+
+
+undefined8 FUN_ff842824(undefined4 param_1,undefined4 param_2,undefined4 param_3,undefined4 param_4)
+
+{
+  int iVar1;
+  undefined4 *puVar2;
+  int iVar3;
+  undefined4 uVar4;
+  undefined4 uVar5;
+  int iVar6;
+  uint *puVar7;
+  undefined4 *puVar8;
+  uint *puVar9;
+  uint *puVar10;
+  uint *puVar11;
+  byte *pbVar12;
+  uint uVar13;
+  byte bVar14;
+  int iVar15;
+  int iVar16;
+  int iVar17;
+  int iVar18;
+  byte bVar19;
+  uint uVar20;
+  uint uVar21;
+  uint uVar22;
+  uint uVar23;
+  bool bVar24;
+  bool bVar25;
+  uint local_28;
+  
+  local_28 = 0x8c;
+  uVar4 = FUN_ff8278e0(0,10,param_3,param_4,param_2,param_3);
+  uVar5 = DAT_ff842b74;
+  puVar2 = DAT_ff842b70;
+  iVar15 = 0;
+  DAT_ff842b70[2] = uVar4;
+  do {
+    FUN_ff8279ec(puVar2[2],puVar2[1] + iVar15 * 0x30,uVar5,s_SioDrv_c_ff842b78,0x1a4);
+    iVar15 = iVar15 + 1;
+  } while (iVar15 < 10);
+  FUN_ff866d34(0x200000);
+  *(undefined4 *)(DAT_ff842b84 + 0x10) = 0;
+  iVar3 = DAT_ff842b88;
+  iVar1 = DAT_ff842b6c;
+  iVar15 = DAT_ff842b68;
+  iVar16 = 0;
+  iVar17 = DAT_ff842b68 + -0x20;
+  iVar18 = DAT_ff842b88 + 8;
+  do {
+    *(undefined1 *)(iVar3 + iVar16) = 0;
+    uVar5 = FUN_ff827928(0,1);
+    *(undefined4 *)(iVar17 + iVar16 * 4) = uVar5;
+    uVar5 = FUN_ff827928(0,0);
+    *(undefined4 *)(iVar15 + iVar16 * 4) = uVar5;
+    FUN_ff81ae8c(0,*(undefined4 *)(iVar1 + iVar16 * 4),FUN_ff842754);
+    puVar8 = *(undefined4 **)(iVar18 + iVar16 * 0x18);
+    if (puVar8 != (undefined4 *)0xffffffff) {
+      iVar6 = iVar18 + iVar16 * 0x18;
+      *(undefined4 *)(iVar6 + 4) = *puVar8;
+      *(undefined4 *)(iVar6 + 0xc) = **(undefined4 **)(iVar6 + 8);
+      if (*(undefined4 **)(iVar6 + 0x10) != (undefined4 *)0xffffffff) {
+        *(undefined4 *)(iVar6 + 0x14) = **(undefined4 **)(iVar6 + 0x10);
+      }
+      **(undefined4 **)(DAT_ff842b64 + iVar16 * 0x34 + 8) = 1;
+    }
+    bVar14 = LAB_ff842794;
+    iVar16 = iVar16 + 1;
+  } while (iVar16 < 8);
+  puVar7 = (uint *)*puVar2;
+  puVar9 = (uint *)&LAB_ff842794;
+  uVar20 = (uint)puVar7 & 3;
+  uVar21 = uVar20;
+  if (uVar20 != 0) {
+    puVar10 = (uint *)0xff842795;
+    if (uVar20 < 3) {
+      puVar10 = (uint *)0xff842796;
+      uVar21 = (uint)bRamff842795;
+    }
+    *(byte *)puVar7 = LAB_ff842794;
+    puVar9 = puVar10;
+    if (uVar20 < 2) {
+      puVar9 = (uint *)((int)puVar10 + 1);
+      bVar14 = (byte)*puVar10;
+    }
+    puVar10 = (uint *)((int)puVar7 + 1);
+    if (uVar20 < 3) {
+      puVar10 = (uint *)((int)puVar7 + 2);
+      *(byte *)((int)puVar7 + 1) = (byte)uVar21;
+    }
+    local_28 = uVar20 + 0x88;
+    puVar7 = puVar10;
+    if (uVar20 < 2) {
+      puVar7 = (uint *)((int)puVar10 + 1);
+      *(byte *)puVar10 = bVar14;
+    }
+  }
+  uVar20 = (uint)puVar9 & 3;
+  if (uVar20 == 0) {
+    bVar24 = 0x1f < local_28;
+    uVar13 = local_28 - 0x20;
+    if (bVar24) {
+      do {
+        if (bVar24) {
+          uVar21 = puVar9[1];
+          uVar20 = puVar9[2];
+          uVar22 = puVar9[3];
+          *puVar7 = *puVar9;
+          puVar7[1] = uVar21;
+          puVar7[2] = uVar20;
+          puVar7[3] = uVar22;
+          uVar20 = puVar9[4];
+          uVar21 = puVar9[5];
+          uVar22 = puVar9[6];
+          uVar23 = puVar9[7];
+          puVar9 = puVar9 + 8;
+          puVar7[4] = uVar20;
+          puVar7[5] = uVar21;
+          puVar7[6] = uVar22;
+          puVar7[7] = uVar23;
+          puVar7 = puVar7 + 8;
+          bVar24 = 0x1f < uVar13;
+          uVar13 = uVar13 - 0x20;
+        }
+      } while (bVar24);
+    }
+    puVar10 = puVar7;
+    if ((bool)((byte)(uVar13 >> 4) & 1)) {
+      uVar20 = *puVar9;
+      uVar21 = puVar9[1];
+      uVar22 = puVar9[2];
+      uVar23 = puVar9[3];
+      puVar9 = puVar9 + 4;
+      *puVar7 = uVar20;
+      puVar7[1] = uVar21;
+      puVar7[2] = uVar22;
+      puVar7[3] = uVar23;
+      puVar10 = puVar7 + 4;
+    }
+    if ((int)(uVar13 << 0x1c) < 0) {
+      uVar20 = *puVar9;
+      uVar21 = puVar9[1];
+      puVar9 = puVar9 + 2;
+      *puVar10 = uVar20;
+      puVar10[1] = uVar21;
+      puVar10 = puVar10 + 2;
+    }
+    uVar21 = uVar13 << 0x1e;
+    puVar7 = puVar10;
+    if ((bool)((byte)(uVar13 >> 2) & 1)) {
+      uVar20 = *puVar9;
+      puVar7 = puVar10 + 1;
+      *puVar10 = uVar20;
+      puVar9 = puVar9 + 1;
+    }
+    if (uVar21 == 0) {
+      return CONCAT44(puVar9,puVar7);
+    }
+  }
+  else {
+    uVar13 = local_28 - 4;
+    if (3 < local_28) {
+      puVar9 = (uint *)((int)puVar9 - uVar20);
+      uVar21 = *puVar9;
+      puVar10 = puVar7;
+      if (uVar20 == 2) {
+        do {
+          puVar11 = puVar9;
+          uVar20 = uVar21 >> 0x10;
+          puVar9 = puVar11 + 1;
+          uVar21 = *puVar9;
+          bVar24 = 3 < uVar13;
+          uVar13 = uVar13 - 4;
+          uVar20 = uVar20 | uVar21 << 0x10;
+          puVar7 = puVar10 + 1;
+          *puVar10 = uVar20;
+          puVar10 = puVar7;
+        } while (bVar24);
+        puVar9 = (uint *)((int)puVar11 + 6);
+      }
+      else if (uVar20 < 3) {
+        do {
+          puVar11 = puVar9;
+          uVar20 = uVar21 >> 8;
+          puVar9 = puVar11 + 1;
+          uVar21 = *puVar9;
+          bVar24 = 3 < uVar13;
+          uVar13 = uVar13 - 4;
+          uVar20 = uVar20 | uVar21 << 0x18;
+          puVar7 = puVar10 + 1;
+          *puVar10 = uVar20;
+          puVar10 = puVar7;
+        } while (bVar24);
+        puVar9 = (uint *)((int)puVar11 + 5);
+      }
+      else {
+        do {
+          puVar11 = puVar9;
+          uVar20 = uVar21 >> 0x18;
+          puVar9 = puVar11 + 1;
+          uVar21 = *puVar9;
+          bVar24 = 3 < uVar13;
+          uVar13 = uVar13 - 4;
+          uVar20 = uVar20 | uVar21 << 8;
+          puVar7 = puVar10 + 1;
+          *puVar10 = uVar20;
+          puVar10 = puVar7;
+        } while (bVar24);
+        puVar9 = (uint *)((int)puVar11 + 7);
+      }
+    }
+  }
+  bVar19 = (byte)uVar21;
+  bVar14 = (byte)uVar20;
+  bVar25 = (bool)((byte)(uVar13 >> 1) & 1);
+  uVar13 = uVar13 << 0x1f;
+  bVar24 = (int)uVar13 < 0;
+  puVar10 = puVar9;
+  if (bVar24) {
+    puVar10 = (uint *)((int)puVar9 + 1);
+    uVar13 = (uint)(byte)*puVar9;
+  }
+  if (bVar25) {
+    pbVar12 = (byte *)((int)puVar10 + 1);
+    bVar14 = (byte)*puVar10;
+    puVar10 = (uint *)((int)puVar10 + 2);
+    bVar19 = *pbVar12;
+  }
+  puVar9 = puVar7;
+  if (bVar24) {
+    puVar9 = (uint *)((int)puVar7 + 1);
+    *(byte *)puVar7 = (byte)uVar13;
+  }
+  if (bVar25) {
+    pbVar12 = (byte *)((int)puVar9 + 1);
+    *(byte *)puVar9 = bVar14;
+    puVar9 = (uint *)((int)puVar9 + 2);
+    *pbVar12 = bVar19;
+  }
+  return CONCAT44(puVar10,puVar9);
+}
+
+
+
+========================================================================
+Function 3/10: FUN_ff843500 — SIO data handler?
+Address: 0xFF843500
+========================================================================
+Ghidra name: FUN_ff843500
+Size: 40 bytes
+
+
+void FUN_ff843500(uint param_1)
+
+{
+  uint *puVar1;
+  uint uVar2;
+  
+  if (param_1 == 3) {
+    uVar2 = *DAT_ff843680 & 0xfffffffe;
+    puVar1 = DAT_ff843680;
+  }
+  else {
+    uVar2 = *DAT_ff84367c & ~(1 << (param_1 & 0xff));
+    puVar1 = DAT_ff84367c;
+  }
+  *puVar1 = uVar2;
+  return;
+}
+
+
+
+========================================================================
+Function 4/10: FUN_ff843600 — SIO area
+Address: 0xFF843600
+========================================================================
+Ghidra name: FUN_ff843600
+Size: 8 bytes
+
+
+void FUN_ff843600(int param_1,undefined4 param_2,int param_3)
+
+{
+  *(undefined4 *)(param_3 + param_1 * 4) = param_2;
+  return;
+}
+
+
+
+========================================================================
+Function 5/10: FUN_ff843700 — SIO area
+Address: 0xFF843700
+========================================================================
+Ghidra name: FUN_ff843700
+Size: 44 bytes
+
+
+undefined4 FUN_ff843700(void)
+
+{
+  int iVar1;
+  int unaff_r4;
+  int unaff_r5;
+  
+  for (; unaff_r4 < 10; unaff_r4 = unaff_r4 + 1) {
+    iVar1 = FUN_ff8433a4(unaff_r4);
+    if (iVar1 == 1) {
+      thunk_FUN_ff810580();
+      if (*(int *)(unaff_r5 + 4) != 0) {
+        (**(code **)(unaff_r5 + 4))(*(undefined4 *)(unaff_r5 + 0xc),unaff_r4);
+      }
+      thunk_FUN_ff81056c();
+    }
+  }
+  thunk_FUN_ff810580();
+  iVar1 = FUN_ff8435c8();
+  if (iVar1 != 0) {
+    switchD_ff8443f8::default(s_ADCScn_c_ff84390c,0x6f);
+  }
+  return 0;
+}
+
+
+
+========================================================================
+Function 6/10: FUN_ff843800 — SIO area
+Address: 0xFF843800
+========================================================================
+Ghidra name: FUN_ff843800
+Size: 264 bytes
+
+
+void FUN_ff843800(void)
+
+{
+  int iVar1;
+  undefined4 uVar2;
+  int iVar3;
+  undefined4 *unaff_r4;
+  int unaff_r5;
+  undefined4 *unaff_r7;
+  undefined4 unaff_r8;
+  
+  *unaff_r4 = 3;
+  FUN_ff8432a8();
+  iVar3 = DAT_ff843928;
+  unaff_r4[8] = DAT_ff843928;
+  unaff_r4[9] = DAT_ff84392c;
+  unaff_r4[10] = iVar3 + -0xb;
+  iVar1 = DAT_ff843930;
+  unaff_r4[0xb] = DAT_ff843930;
+  unaff_r4[0xc] = iVar3;
+  unaff_r4[0xd] = iVar3 + 0x10000;
+  unaff_r4[0xe] = DAT_ff843934;
+  unaff_r4[0xf] = iVar1 + 6;
+  iVar3 = DAT_ff843938;
+  unaff_r4[4] = DAT_ff843938;
+  unaff_r4[5] = iVar3 + -0x100;
+  FUN_ff8432bc();
+  FUN_ff81ae8c(0,0x40,FUN_ff8436a0,0);
+  FUN_ff81ae8c(0,0x80,FUN_ff84372c,0);
+  FUN_ff81ae8c(0,0x81,FUN_ff84372c,1);
+  FUN_ff81ae8c(0,0x88,FUN_ff84372c,2);
+  FUN_ff81ae8c(0,0x89,FUN_ff84372c,3);
+  FUN_ff843294();
+  uVar2 = FUN_ff827348(0,1);
+  unaff_r7[4] = uVar2;
+  do {
+    iVar3 = FUN_ff843300(10);
+    if (iVar3 != 1) break;
+    unaff_r5 = unaff_r5 + -1;
+  } while (unaff_r5 != 0);
+  uVar2 = FUN_ff827928(0,0);
+  unaff_r7[5] = uVar2;
+  *unaff_r7 = unaff_r8;
+  return;
+}
+
+
+
+========================================================================
+Function 7/10: FUN_ff843900 — SIO area (0xC022F000 ref)
+Address: 0xFF843900
+========================================================================
+Ghidra name: FUN_ff843900
+Size: 8 bytes
+
+
+void FUN_ff843900(void)
+
+{
+  undefined4 *unaff_r7;
+  undefined4 unaff_r8;
+  
+  *unaff_r7 = unaff_r8;
+  return;
+}
+
+
+
+========================================================================
+Function 8/10: FUN_ff845000 — SIO/Audio area
+Address: 0xFF845000
+========================================================================
+Ghidra name: FUN_ff845000
+Size: 272 bytes
+
+
+void FUN_ff845000(void)
+
+{
+  ushort *puVar1;
+  ushort uVar2;
+  uint uVar3;
+  int unaff_r4;
+  int unaff_r5;
+  undefined4 unaff_r6;
+  undefined4 unaff_r7;
+  bool bVar4;
+  int in_stack_00000000;
+  
+  FUN_ff827994(*(undefined4 *)(unaff_r5 + 0x10),DAT_ff84511c,s_BeepDrv_c_ff845124,0xd7);
+  *(undefined4 *)(unaff_r5 + 0x18) = unaff_r6;
+  puVar1 = DAT_ff845118;
+  *(undefined4 *)(DAT_ff845118 + 2) = unaff_r7;
+  if ((*puVar1 == 1) && (unaff_r4 != 1)) {
+    FUN_ff846c90();
+  }
+  if (unaff_r4 == 0) {
+    bVar4 = 1 < *puVar1;
+    if (!bVar4) {
+      *DAT_ff845114 = 1;
+    }
+    uVar2 = (ushort)bVar4;
+    if (bVar4) {
+      uVar2 = 9;
+    }
+    else {
+      *(bool *)(puVar1 + 1) = bVar4;
+    }
+  }
+  else {
+    if (unaff_r4 != 1) {
+      *(undefined1 *)((int)puVar1 + 3) = *(undefined1 *)(DAT_ff845120 + unaff_r4 * 0xc);
+      *(undefined1 *)(puVar1 + 1) = 1;
+      if (*puVar1 < 2) {
+        FUN_ff827e14();
+        uVar3 = FUN_ff827fcc(in_stack_00000000 + 10,&LAB_ff844e44,&LAB_ff844e44,0);
+        *(uint *)(unaff_r5 + 4) = uVar3;
+        if (uVar3 != 0x15 && (uVar3 & 1) != 0) {
+          switchD_ff8443f8::default(s_BeepDrv_c_ff845124,0xcb);
+        }
+      }
+      *puVar1 = (ushort)unaff_r4;
+      goto LAB_ff845104;
+    }
+    if (*puVar1 == 0) {
+      FUN_ff844e50();
+      goto LAB_ff845104;
+    }
+    if (*puVar1 == 1) {
+      if (*(code **)(unaff_r5 + 0x18) != (code *)0x0) {
+        (**(code **)(unaff_r5 + 0x18))();
+      }
+      goto LAB_ff845104;
+    }
+    uVar2 = 10;
+  }
+  *puVar1 = uVar2;
+LAB_ff845104:
+  FUN_ff827584(*(undefined4 *)(unaff_r5 + 0x10));
+  return;
+}
+
+
+
+========================================================================
+Function 9/10: FUN_ff845200 — near AudioIC refs
+Address: 0xFF845200
+========================================================================
+Ghidra name: FUN_ff845200
+Size: 20 bytes
+
+
+undefined4 FUN_ff845200(void)
+
+{
+  int iVar1;
+  uint uVar2;
+  int unaff_r4;
+  
+  FUN_ff844fc8();
+  uVar2 = *(uint *)(unaff_r4 + 0xc);
+  if (((uVar2 & 1) - 1 & uVar2) != 0) {
+    iVar1 = FUN_ff812340(uVar2 >> 1);
+    if (iVar1 == -1) {
+      switchD_ff8443f8::default(s_KerSem_c_ff827564,DAT_ff827620);
+    }
+    return 0;
+  }
+  return 7;
+}
+
+
+
+========================================================================
+Function 10/10: FUN_ff845400 — near 0xC0224000 ref
+Address: 0xFF845400
+========================================================================
+Ghidra name: FUN_ff845400
+Size: 12 bytes
+
+
+void FUN_ff845400(undefined4 param_1,undefined4 param_2)
+
+{
+  int unaff_r4;
+  
+  *(undefined4 *)(unaff_r4 + 0x68) = param_2;
+  return;
+}
+
+
+
