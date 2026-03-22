@@ -559,46 +559,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // --- Clean up leftover 0-byte MOV files from previous session ---
-    // FAT writes corrupt ISP color processing on Digic IV.
-    // Fix: delete files, then REBOOT camera to reset ISP state.
-    // Only reboots when files were actually deleted.
-    {
-        client.execute_script(
-            "local d='A/DCIM/100CANON' "
-            "local t={} "
-            "for f in os.idir(d) do "
-            "  if string.match(f,'%.MOV$') then "
-            "    local p=d..'/'..f "
-            "    local s=os.stat(p) "
-            "    if s and s.size<1024 then t[#t+1]=p end "
-            "  end "
-            "end "
-            "for _,p in ipairs(t) do os.remove(p) end "
-            "write_usb_msg(tostring(#t))");
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-        std::string msg;
-        client.read_script_msg(msg);
-        int deleted = atoi(msg.c_str());
-
-        if (deleted > 0) {
-            printf("Cleaned %d leftover MOV file(s), rebooting camera...\n", deleted);
-            client.execute_script("reboot()");
-            client.disconnect();
-            // Poll for camera to come back (up to 30 seconds)
-            printf("Waiting for camera...\n");
-            for (int retry = 0; retry < 30; retry++) {
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-                if (client.connect()) break;
-            }
-            if (!client.is_connected()) {
-                fprintf(stderr, "ERROR: Camera did not come back after reboot\n");
-                return 1;
-            }
-            printf("Reconnected.\n");
-        }
-    }
+    // MOV cleanup: 0-byte MOV files accumulate from audio minimal-write path.
+    // Auto-cleanup disabled — Lua filesystem ops + recording cause color shift.
+    // Files are harmless (0 bytes). Clean manually with:
+    //   chdk-webcam.exe --delete "A/DCIM/100CANON/MVI_XXXX.MOV"
 
     // --- Start webcam streaming on camera ---
     printf("Starting webcam on camera (quality=%d)...\n", opts.jpeg_quality);
