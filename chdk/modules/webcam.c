@@ -420,6 +420,21 @@ static int webcam_stop(void)
     // Stop recording if we started it
     if (recording_active) {
         int stop_retries;
+
+        // Save MOV filename BEFORE stopping — StopMovieRecord may clear it.
+        // MUST be static — DeleteFile_Fut is async, reads path later.
+        volatile unsigned int *ring = (volatile unsigned int *)0x8968;
+        static char mov_path[64];
+        unsigned int fn = ring[0x50/4];
+        mov_path[0] = 0;
+        if (fn > 0x1000 && fn < 0x04000000) {
+            int j;
+            const char *src = (const char *)fn;
+            for (j = 0; j < 63 && src[j]; j++)
+                mov_path[j] = src[j];
+            mov_path[j] = 0;
+        }
+
         call_func_ptr(FW_UIFS_StopMovieRecord, 0, 0);
 
         for (stop_retries = 0; stop_retries < 50; stop_retries++) {
@@ -427,6 +442,28 @@ static int webcam_stop(void)
             if (get_movie_status() != VIDEO_RECORD_IN_PROGRESS) break;
         }
         recording_active = 0;
+
+        // Delete the 0-byte MOV file
+        if (mov_path[0]) {
+            msleep(500);
+            // Store path and return codes in shared memory for bridge to read
+            {
+                volatile unsigned int *ashm = (volatile unsigned int *)0x000FE000;
+                // Store path at ashm[10..17]
+                int k;
+                for (k = 0; k < 8; k++)
+                    ashm[10 + k] = *(unsigned int *)(mov_path + k * 4);
+            }
+            int rc1 = remove(mov_path);
+            int (*fw_delete)(const char *) = (int (*)(const char *))0xFF8233A0;
+            int rc2 = fw_delete(mov_path);
+            {
+                volatile unsigned int *ashm = (volatile unsigned int *)0x000FE000;
+                ashm[18] = (unsigned int)rc1;
+                ashm[19] = (unsigned int)rc2;
+            }
+            msleep(500);
+        }
     }
 
     frame_count = 0;
