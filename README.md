@@ -69,9 +69,9 @@ For detailed architecture documentation, see [Architecture](docs/architecture.md
 - **Record to MKV** -- save video + audio to file with `--record`
 - **DirectShow virtual webcam** -- appears as "CHDK Webcam" in Zoom, Teams, OBS
 - **Preview window** -- real-time video with zoom input via keyboard and mouse wheel
-- **WASAPI audio output** -- play camera mic through PC speakers with `--audio-out`
+- **WASAPI audio output** -- play camera mic through PC speakers or virtual audio cable (`--audio-out`)
 - **PTP firmware upload** -- deploy new firmware over USB without removing the SD card
-- **Camera file management** -- `--ls`, `--delete`, `--download` files on camera via PTP
+- **Camera file management** -- `--ls`, `--delete`, `--download`, `--exec` files on camera via PTP
 - **Dual-slot seqlock** -- lock-free producer-consumer protocol for reliable frame delivery
 
 ## Pre-built Binaries
@@ -98,6 +98,16 @@ To build from source, see **[Getting Started](docs/getting-started.md)**.
 When the preview window is focused:
 - **Keyboard:** `+` / `-` keys (or numpad `+` / `-`) to zoom in/out
 - **Mouse wheel:** scroll up to zoom in, scroll down to zoom out
+
+### Audio in Conferencing Apps
+
+The camera captures 44.1kHz mono audio from its built-in microphone. To use it in Zoom, Teams, or OBS:
+
+1. Install [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free)
+2. Run: `chdk-webcam.exe --audio-out`
+3. In the conferencing app: select **"CHDK Webcam"** for video, **"CABLE Output"** for microphone
+
+To record video + audio to a file: `chdk-webcam.exe --record output.mkv`
 
 ## Documentation
 
