@@ -559,10 +559,45 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // MOV cleanup: 0-byte MOV files accumulate from audio minimal-write path.
-    // Auto-cleanup disabled — Lua filesystem ops + recording cause color shift.
-    // Files are harmless (0 bytes). Clean manually with:
-    //   chdk-webcam.exe --delete "A/DCIM/100CANON/MVI_XXXX.MOV"
+    // --- Clean up leftover 0-byte MOV files ---
+    // Three-step approach: delete in playback mode → reboot → reconnect.
+    // Reboot fully resets ISP state so no color shift on streaming.
+    {
+        client.execute_script(
+            "local d='A/DCIM/100CANON' "
+            "local t={} "
+            "for f in os.idir(d) do "
+            "  if string.match(f,'%.MOV$') then "
+            "    local p=d..'/'..f "
+            "    local s=os.stat(p) "
+            "    if s and s.size<1024 then t[#t+1]=p end "
+            "  end "
+            "end "
+            "for _,p in ipairs(t) do os.remove(p) end "
+            "write_usb_msg(tostring(#t))");
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+        std::string msg;
+        client.read_script_msg(msg);
+        int deleted = atoi(msg.c_str());
+
+        // Always delete + reboot to ensure clean ISP state.
+        // The reboot fixes both color shift AND recording failures
+        // from previous session's finalization.
+        printf("Cleaned MOV files, rebooting for clean state...\n");
+        client.execute_script("reboot()");
+        client.disconnect();
+        printf("Waiting for camera...\n");
+        for (int retry = 0; retry < 30; retry++) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (client.connect()) break;
+        }
+        if (!client.is_connected()) {
+            fprintf(stderr, "ERROR: Camera did not come back after reboot\n");
+            return 1;
+        }
+        printf("Reconnected.\n");
+    }
 
     // --- Start webcam streaming on camera ---
     printf("Starting webcam on camera (quality=%d)...\n", opts.jpeg_quality);

@@ -418,19 +418,10 @@ static int webcam_stop(void)
     if (recording_active) {
         int stop_retries;
 
-        // Save MOV filename BEFORE stopping — StopMovieRecord may clear it.
-        // MUST be static — DeleteFile_Fut is async, reads path later.
+        // Restore normal recording state before stopping.
+        // +0x80=1 lets StopMovieRecord finalize properly (no beeping/errors).
         volatile unsigned int *ring = (volatile unsigned int *)0x8968;
-        static char mov_path[64];
-        unsigned int fn = ring[0x50/4];
-        mov_path[0] = 0;
-        if (fn > 0x1000 && fn < 0x04000000) {
-            int j;
-            const char *src = (const char *)fn;
-            for (j = 0; j < 63 && src[j]; j++)
-                mov_path[j] = src[j];
-            mov_path[j] = 0;
-        }
+        ring[0x80/4] = 1;
 
         call_func_ptr(FW_UIFS_StopMovieRecord, 0, 0);
 
