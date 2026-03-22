@@ -192,12 +192,20 @@ Saves H.264 video + PCM audio to a single MKV file. Can be combined with `--audi
 
 ## Known Limitations
 
+**Video:**
 - **Windows only** -- the bridge uses Win32 GDI and DirectShow (no Linux/macOS support)
 - **Single camera model** -- built specifically for the IXUS 870 IS (firmware 1.01a)
-- **640x480 native** -- limited by the camera's video encoder; upscaled to 1280x720 on PC
-- **~1s startup delay** -- H.264 decoder needs first IDR; audio muted for 1s (startup cracks)
-- **~5s shutdown delay** -- firmware MOV finalization ("Daten werden bearbeitet")
-- **0-byte MOV file** -- created per session for audio pipeline init, auto-cleaned at next start
+- **640x480 native** -- limited by the camera's H.264 encoder; upscaled to 1280x720 on PC
+- **~0.5s video startup delay** -- decoder discards P-frames until first natural IDR keyframe
+
+**Audio:**
+- **Mono only** -- camera has a single built-in microphone
+- **~1s audio startup mute** -- SSIO DMA initialization produces cracks; first 30 frames silenced
+- **No native virtual microphone** -- Windows 10/11 requires a kernel-mode driver for DirectShow audio input devices; use [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free) as workaround
+- **0-byte MOV file per session** -- required to initialize the audio pipeline (SSIO DMA only starts with active recording); auto-cleaned at next session start
+
+**General:**
+- **~5s shutdown delay** -- firmware MOV finalization ("Daten werden bearbeitet") after stop
 
 ## License
 
