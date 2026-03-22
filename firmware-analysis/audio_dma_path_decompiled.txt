@@ -1,0 +1,156 @@
+========================================================================
+Audio DMA Path — Following 0xC0224000 and 0xC022F000 References
+Firmware: IXUS 870 IS / SD 880 IS, version 1.01a
+========================================================================
+
+=== Literal pool context ===
+
+  0xFF8C0F40 = 0x6F697353
+  0xFF8C0F44 = 0x2E767244
+  0xFF8C0F48 = 0x00000063
+  0xFF8C0F4C = 0xC082E000
+  0xFF8C0F50 = 0xC0224000
+  0xFF8C0F54 = 0xC0820000
+  0xFF8C0F58 = 0x0003F210
+  0xFF8C0F5C = 0xFFAE14C8
+
+========================================================================
+Near 0xC0224000 ref (0xFF8C0E00) — recording area
+No function found near 0xFF8C0E00
+
+========================================================================
+Near 0xC0224000 ref (0xFF8C0F00) — recording area
+No function found near 0xFF8C0F00
+
+========================================================================
+Near 0xC0224000 ref (0xFF8C1000) — recording area
+No function found near 0xFF8C1000
+
+========================================================================
+Near 0xC0224000 ref (0xFF8C1100) — recording area
+No function found near 0xFF8C1100
+
+========================================================================
+FUN_ff8436a0 — IRQ 0x40 handler
+Found: FUN_ff8436a0 @ 0xff8436a0 (size=96)
+
+
+undefined4 FUN_ff8436a0(void)
+
+{
+  undefined4 uVar1;
+  int iVar2;
+  int iVar3;
+  int iVar4;
+  
+  thunk_FUN_ff810594();
+  uVar1 = thunk_FUN_ff81056c();
+  iVar2 = FUN_ff84334c();
+  iVar4 = DAT_ff843908;
+  if (iVar2 == 1) {
+    iVar2 = 3;
+    do {
+      iVar3 = FUN_ff8433a4(iVar2);
+      if (iVar3 == 1) {
+        thunk_FUN_ff810580(uVar1);
+        if (*(int *)(iVar4 + 4) != 0) {
+          (**(code **)(iVar4 + 4))(*(undefined4 *)(iVar4 + 0xc),iVar2);
+        }
+        thunk_FUN_ff81056c();
+      }
+      iVar2 = iVar2 + 1;
+    } while (iVar2 < 10);
+  }
+  thunk_FUN_ff810580(uVar1);
+  iVar4 = FUN_ff8435c8();
+  if (iVar4 != 0) {
+    switchD_ff8443f8::default(s_ADCScn_c_ff84390c,0x6f);
+  }
+  return 0;
+}
+
+
+
+========================================================================
+FUN_ff84372c — IRQ 0x80-0x89 handler (DMA completion?)
+Found: FUN_ff84372c @ 0xff84372c (size=92)
+
+
+undefined4 FUN_ff84372c(undefined4 param_1)
+
+{
+  undefined4 uVar1;
+  int iVar2;
+  
+  thunk_FUN_ff810594();
+  uVar1 = thunk_FUN_ff81056c();
+  iVar2 = FUN_ff843644(param_1);
+  if (iVar2 == 1) {
+    thunk_FUN_ff810580(uVar1);
+    if (*(int *)(DAT_ff843908 + 8) != 0) {
+      (**(code **)(DAT_ff843908 + 8))(*(undefined4 *)(DAT_ff843908 + 0x18),param_1);
+    }
+    thunk_FUN_ff81056c();
+  }
+  thunk_FUN_ff810580(uVar1);
+  return 0;
+}
+
+
+
+========================================================================
+FUN_ff8432a8 — called by DMA init
+Found: FUN_ff8432a8 @ 0xff8432a8 (size=20)
+
+
+void FUN_ff8432a8(void)
+
+{
+  *(uint *)(DAT_ff843668 + 4) = *(uint *)(DAT_ff843668 + 4) & 0xfffffffe;
+  return;
+}
+
+
+
+========================================================================
+FUN_ff8432bc — called by DMA init
+Found: FUN_ff8432bc @ 0xff8432bc (size=16)
+
+
+void FUN_ff8432bc(void)
+
+{
+  *(undefined4 *)(DAT_ff843668 + 0xd4) = 0xf0000000;
+  return;
+}
+
+
+
+========================================================================
+Near 0xC022F000 ref (0xFF86C500)
+No function found near 0xFF86C500
+
+========================================================================
+Near 0xC022F000 ref (0xFF86C5D0)
+Found: FUN_ff86c5dc @ 0xff86c5dc (size=8)
+
+
+undefined4 FUN_ff86c5dc(void)
+
+{
+  return 1;
+}
+
+
+
+========================================================================
+Near 0xC0224000 ref (0xFFA3DA00)
+No function found near 0xFFA3DA00
+
+========================================================================
+Kernel DMA/interrupt table (0xFFFF0400-0xFFFF0600)
+========================================================================
+
+  0xFFFF04FC = 0xC022F000
+  0xFFFF0578 = 0xC022F200
+  0xFFFF057C = 0xC022F204

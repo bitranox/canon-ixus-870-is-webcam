@@ -502,3 +502,11 @@
  ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x23b30
  ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x23f90
  ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x23ac0
+ ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x24140
+ ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x26068
+ ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x24060
+ ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x260c0
+ ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x23f60
+ ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x24770
+ ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x24750
+ ixus870_sd880-101a (dryos, #12694): MEMISOSIZE used: 0x23ac0
