@@ -443,27 +443,7 @@ static int webcam_stop(void)
         }
         recording_active = 0;
 
-        // Delete the 0-byte MOV file
-        if (mov_path[0]) {
-            msleep(500);
-            // Store path and return codes in shared memory for bridge to read
-            {
-                volatile unsigned int *ashm = (volatile unsigned int *)0x000FE000;
-                // Store path at ashm[10..17]
-                int k;
-                for (k = 0; k < 8; k++)
-                    ashm[10 + k] = *(unsigned int *)(mov_path + k * 4);
-            }
-            int rc1 = remove(mov_path);
-            int (*fw_delete)(const char *) = (int (*)(const char *))0xFF8233A0;
-            int rc2 = fw_delete(mov_path);
-            {
-                volatile unsigned int *ashm = (volatile unsigned int *)0x000FE000;
-                ashm[18] = (unsigned int)rc1;
-                ashm[19] = (unsigned int)rc2;
-            }
-            msleep(500);
-        }
+        // MOV file deletion handled by bridge via PTP Lua after stop.
     }
 
     frame_count = 0;

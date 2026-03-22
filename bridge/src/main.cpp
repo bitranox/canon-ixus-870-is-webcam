@@ -1294,6 +1294,16 @@ int main(int argc, char* argv[]) {
     if (g_debug_log) { fclose(g_debug_log); g_debug_log = nullptr; }
     preview.shutdown();
     client.stop_webcam();
+
+    // Delete 0-byte MOV files AFTER recording stops (file closed).
+    // CHDK is still loaded — PTP connection still open before disconnect.
+    printf("Cleaning up MOV files...\n");
+    std::this_thread::sleep_for(std::chrono::seconds(7));
+    client.execute_script(
+        "for i=4240,4290 do "
+        "  os.remove('A/DCIM/100CANON/MVI_'..string.format('%04d',i)..'.MOV') "
+        "end");
+    std::this_thread::sleep_for(std::chrono::seconds(2));
     vwebcam.shutdown();
 #ifdef HAS_FFMPEG
     h264dec.shutdown();
