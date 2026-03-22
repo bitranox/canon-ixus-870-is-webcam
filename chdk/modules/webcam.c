@@ -420,6 +420,12 @@ static int webcam_stop(void)
     // Stop recording if we started it
     if (recording_active) {
         int stop_retries;
+        volatile unsigned int *ring = (volatile unsigned int *)0x8968;
+        unsigned int filename_ptr = ring[0x50/4];
+
+        // Let StopMovieRecord run normally — don't touch fd or flags.
+        // Finalization writes a small trailer (~few KB) to the MOV file.
+        // This is a one-time write, not continuous — negligible SD wear.
         call_func_ptr(FW_UIFS_StopMovieRecord, 0, 0);
 
         for (stop_retries = 0; stop_retries < 50; stop_retries++) {
@@ -427,6 +433,12 @@ static int webcam_stop(void)
             if (get_movie_status() != VIDEO_RECORD_IN_PROGRESS) break;
         }
         recording_active = 0;
+
+        // Delete the MOV file after finalization completes
+        if (filename_ptr > 0x1000 && filename_ptr < 0x04000000) {
+            msleep(500);
+            remove((const char *)filename_ptr);
+        }
     }
 
     frame_count = 0;
