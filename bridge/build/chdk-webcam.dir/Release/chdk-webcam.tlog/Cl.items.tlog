@@ -6,3 +6,4 @@ C:\projects\ixus870IS\bridge\src\webcam\preview_window.cpp;C:\projects\ixus870IS
 C:\projects\ixus870IS\bridge\src\webcam\virtual_webcam.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\virtual_webcam.obj
 C:\projects\ixus870IS\bridge\src\webcam\audio_output.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\audio_output.obj
 C:\projects\ixus870IS\bridge\src\webcam\av_recorder.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\av_recorder.obj
+C:\projects\ixus870IS\bridge\src\webcam\virtual_mic.cpp;C:\projects\ixus870IS\bridge\build\chdk-webcam.dir\Release\virtual_mic.obj

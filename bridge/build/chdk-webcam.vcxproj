@@ -340,6 +340,8 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\audio_output.h" />
     <ClCompile Include="C:\projects\ixus870IS\bridge\src\webcam\av_recorder.cpp" />
     <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\av_recorder.h" />
+    <ClCompile Include="C:\projects\ixus870IS\bridge\src\webcam\virtual_mic.cpp" />
+    <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\virtual_mic.h" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>

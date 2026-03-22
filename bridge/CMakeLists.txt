@@ -66,6 +66,8 @@ set(WEBCAM_SOURCES
     src/webcam/audio_output.h
     src/webcam/av_recorder.cpp
     src/webcam/av_recorder.h
+    src/webcam/virtual_mic.cpp
+    src/webcam/virtual_mic.h
 )
 
 set(ALL_SOURCES

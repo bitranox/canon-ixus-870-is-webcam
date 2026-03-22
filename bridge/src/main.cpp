@@ -27,6 +27,7 @@
 #endif
 #include "webcam/audio_output.h"
 #include "webcam/av_recorder.h"
+#include "webcam/virtual_mic.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -632,6 +633,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Initialize virtual microphone (shared memory for DirectShow audio filter)
+    webcam::VirtualMic vmic;
+    if (!opts.no_webcam) {
+        vmic.init(44100, 1, 16);
+    }
+
     // Initialize AV recorder if requested
     webcam::AVRecorder recorder;
     if (!opts.record_file.empty()) {
@@ -794,15 +801,15 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Write piggybacked audio to WAV file + play through speakers + record
+        // Write piggybacked audio to all outputs
         if (!mjpeg.audio_data.empty()) {
             audio_wav_write(mjpeg.audio_data.data(), mjpeg.audio_data.size());
-            if (audio_out.is_initialized()) {
+            if (audio_out.is_initialized())
                 audio_out.write(mjpeg.audio_data.data(), mjpeg.audio_data.size());
-            }
-            if (recorder.is_open()) {
+            if (recorder.is_open())
                 recorder.write_audio(mjpeg.audio_data.data(), mjpeg.audio_data.size());
-            }
+            if (vmic.is_initialized())
+                vmic.write(mjpeg.audio_data.data(), mjpeg.audio_data.size());
         }
 
         // Record video frame
