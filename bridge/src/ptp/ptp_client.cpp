@@ -912,11 +912,18 @@ bool PTPClient::get_frame(MJPEGFrame& frame) {
 
     // Audio piggybacked: last 2940 bytes of data are PCM audio
     // (44100Hz mono 16-bit, fixed size = 88200 / 30fps)
+    // Mute first 10 frames (~330ms) to avoid startup cracks.
     constexpr uint32_t AUDIO_PER_FRAME = 2940;
+    constexpr uint32_t AUDIO_MUTE_FRAMES = 30; // ~1.0s — mute startup cracks
+    static uint32_t audio_frame_count = 0;
     if (data.size() > AUDIO_PER_FRAME) {
         size_t video_sz = data.size() - AUDIO_PER_FRAME;
-        frame.audio_data.assign(data.begin() + video_sz, data.end());
+        if (audio_frame_count >= AUDIO_MUTE_FRAMES) {
+            frame.audio_data.assign(data.begin() + video_sz, data.end());
+        }
+        // else: no audio_data → silence
         data.resize(video_sz);
+        audio_frame_count++;
     }
     frame.data = std::move(data);
     frame.width = (resp.num_params >= 2) ? resp.params[1] : 0;
