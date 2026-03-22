@@ -910,9 +910,21 @@ bool PTPClient::get_frame(MJPEGFrame& frame) {
         return false;
     }
 
+    // param1 = video_size, param2 = audio_size (piggybacked)
+    // data contains [video_bytes][audio_bytes]
+    {
+        uint32_t video_sz = resp.params[0];  // param1
+        uint32_t audio_sz = (resp.num_params >= 2) ? resp.params[1] : 0;
+
+        if (audio_sz > 0 && audio_sz < data.size() && video_sz + audio_sz <= data.size()) {
+            // Split: keep only video in frame.data, store audio separately
+            frame.audio_data.assign(data.begin() + video_sz, data.begin() + video_sz + audio_sz);
+            data.resize(video_sz);
+        }
+    }
     frame.data = std::move(data);
-    frame.width = (resp.num_params >= 2) ? resp.params[1] : 0;
-    frame.height = (resp.num_params >= 3) ? resp.params[2] : 0;
+    frame.width = 640;   // known fixed value
+    frame.height = (resp.num_params >= 3) ? resp.params[2] : 480;
     // Format is encoded in high byte of param4, frame_num in low 24 bits
     if (resp.num_params >= 4) {
         frame.format = (resp.params[3] >> 24) & 0xFF;

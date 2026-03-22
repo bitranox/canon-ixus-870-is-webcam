@@ -68,11 +68,12 @@ constexpr uint32_t FRAME_FMT_H264_MULTI = 4;  // Multiple H.264 frames batched
 
 // Frame received from camera (JPEG, raw UYVY, or H.264)
 struct MJPEGFrame {
-    std::vector<uint8_t> data;  // Frame data (JPEG or raw UYVY)
-    uint32_t width;             // Frame width
-    uint32_t height;            // Frame height
-    uint32_t frame_num;         // Frame counter from camera
-    uint32_t format;            // FRAME_FMT_JPEG or FRAME_FMT_UYVY
+    std::vector<uint8_t> data;        // Video frame data (H.264 NAL units)
+    std::vector<uint8_t> audio_data;  // Piggybacked audio (44.1kHz mono 16-bit PCM)
+    uint32_t width;                   // Frame width
+    uint32_t height;                  // Frame height
+    uint32_t frame_num;               // Frame counter from camera
+    uint32_t format;                  // FRAME_FMT_H264, etc.
 };
 
 // Connection info
