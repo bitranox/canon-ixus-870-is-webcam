@@ -6,8 +6,8 @@
 // Register: regsvr32 chdk_mic.dll
 // Unregister: regsvr32 /u chdk_mic.dll
 
-#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>
 #include <initguid.h>
 #include <strmif.h>
 #include <uuids.h>
