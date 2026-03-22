@@ -406,9 +406,6 @@ static int webcam_stop(void)
 {
     webcam_active = 0;
 
-    // Re-enable auto-power-off (disabled in webcam_start)
-    enable_shutdown();
-
     // Disable spy buffer first — movie_rec.c's spy_ring_write returns
     // early when magic is cleared, preventing writes during shutdown.
     {
@@ -455,6 +452,7 @@ static int webcam_stop(void)
         webcam_mode_switched = 0;
     }
 
+    enable_shutdown();
     return 0;
 }
 

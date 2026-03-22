@@ -559,6 +559,22 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // --- Clean up leftover 0-byte MOV files from previous session ---
+    // Collect filenames first (can't modify dir while iterating), then delete.
+    // Only deletes files < 1KB as safeguard against deleting real videos.
+    client.execute_script(
+        "local d='A/DCIM/100CANON' "
+        "local t={} "
+        "for f in os.idir(d) do "
+        "  if string.match(f,'%.MOV$') then "
+        "    local p=d..'/'..f "
+        "    local s=os.stat(p) "
+        "    if s and s.size<1024 then t[#t+1]=p end "
+        "  end "
+        "end "
+        "for _,p in ipairs(t) do os.remove(p) end");
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
     // --- Start webcam streaming on camera ---
     printf("Starting webcam on camera (quality=%d)...\n", opts.jpeg_quality);
     bool start_ok = client.start_webcam(opts.jpeg_quality);
@@ -1382,16 +1398,6 @@ int main(int argc, char* argv[]) {
     if (g_debug_log) { fclose(g_debug_log); g_debug_log = nullptr; }
     preview.shutdown();
     client.stop_webcam();
-
-    // Delete 0-byte MOV files via Lua after recording stops.
-    // Wait for finalization to complete, then delete via os.remove().
-    printf("Cleaning up MOV files...\n");
-    std::this_thread::sleep_for(std::chrono::seconds(12));
-    client.execute_script(
-        "for i=4240,4300 do "
-        "  os.remove('A/DCIM/100CANON/MVI_'..string.format('%04d',i)..'.MOV') "
-        "end");
-    std::this_thread::sleep_for(std::chrono::seconds(1));
     vwebcam.shutdown();
 #ifdef HAS_FFMPEG
     h264dec.shutdown();
