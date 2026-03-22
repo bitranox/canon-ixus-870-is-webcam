@@ -4,7 +4,7 @@ Turn a Canon IXUS 870 IS into a USB webcam streaming H.264 video at 640x480@30fp
 
 **Camera:** Canon IXUS 870 IS / PowerShot SD880 IS / IXY DIGITAL 920 IS
 **Firmware:** 1.01a (Digic IV, ARM926EJ-S, DryOS)
-**Status:** v35e -- stable, artifact-free streaming with zoom control
+**Status:** v36p -- stable video + audio streaming with zoom control
 
 ## Performance
 
@@ -16,7 +16,8 @@ Turn a Canon IXUS 870 IS into a USB webcam streaming H.264 video at 640x480@30fp
 | Frame size | 35-46 KB typical (H.264), up to ~65 KB (IDR keyframes) |
 | PTP round-trip | min 6ms, avg 29ms, max 80ms |
 | Heap allocation | 0 bytes (zero-copy from ring buffer to USB) |
-| SD card writes | 0 bytes (drain mode suppresses MOV file creation) |
+| SD card writes | 0 bytes video (0-byte MOV file auto-cleaned) |
+| Audio | 44100 Hz mono 16-bit PCM from camera microphone |
 | Streaming duration | Unlimited (auto-power-off disabled) |
 | Zoom | Real-time via preview window (+/- keys, mouse wheel), zero artifacts |
 
@@ -62,13 +63,16 @@ For detailed architecture documentation, see [Architecture](docs/architecture.md
 ## Features
 
 - **30 FPS H.264 streaming** from the camera's native video encoder
+- **44.1 kHz audio** from camera microphone, piggybacked on video frames
 - **Zero-copy frame delivery** -- no on-camera memory allocation or copying
 - **Real-time zoom control** -- 10 positions (28-112mm), zero artifacts during zoom
+- **Record to MKV** -- save video + audio to file with `--record`
 - **DirectShow virtual webcam** -- appears as "CHDK Webcam" in Zoom, Teams, OBS
 - **Preview window** -- real-time video with zoom input via keyboard and mouse wheel
+- **WASAPI audio output** -- play camera mic through PC speakers with `--audio-out`
 - **PTP firmware upload** -- deploy new firmware over USB without removing the SD card
+- **Camera file management** -- `--ls`, `--delete`, `--download` files on camera via PTP
 - **Dual-slot seqlock** -- lock-free producer-consumer protocol for reliable frame delivery
-- **SD write suppression** -- no MOV files created, unlimited streaming duration
 
 ## Pre-built Binaries
 
@@ -128,8 +132,9 @@ When the preview window is focused:
 - **Windows only** -- the bridge uses Win32 GDI and DirectShow (no Linux/macOS support)
 - **Single camera model** -- built specifically for the IXUS 870 IS (firmware 1.01a)
 - **640x480 native** -- limited by the camera's video encoder; upscaled to 1280x720 on PC
-- **~0.5s startup delay** -- H.264 decoder discards P-frames until the first IDR keyframe
-- **No audio** -- video only (Linear PCM from the recording pipeline is not captured)
+- **~1s startup delay** -- H.264 decoder needs first IDR; audio muted for 1s (startup cracks)
+- **~5s shutdown delay** -- firmware MOV finalization ("Daten werden bearbeitet")
+- **0-byte MOV file** -- created per session for audio pipeline init, auto-cleaned at next start
 
 ## License
 

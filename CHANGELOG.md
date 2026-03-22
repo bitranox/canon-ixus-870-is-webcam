@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-03-22
+
+### Summary
+
+Audio capture from camera microphone + recording to MKV + bridge file management. Audio is piggybacked on video frames via a two-part PTP send — zero extra round-trips, zero-copy video preserved.
+
+### Added
+
+- **Audio capture** — 44100 Hz mono 16-bit PCM from camera microphone via SSIO DMA intercept
+- **+0x80=2 trick** — blocks video SD writes while keeping audio pipeline alive
+- **msg 8 intercept** — captures audio DMA buffer pointer for per-frame PCM reading (2940 bytes/frame)
+- **Two-part PTP send** — video (zero-copy from ring buffer) then audio (from shared memory) in one data phase
+- **`--record FILE`** — save video + audio to MKV file via FFmpeg libavformat
+- **`--audio-out`** — play camera audio through PC speakers via WASAPI
+- **`--ls PATH`** — list directory on camera via CHDK Lua
+- **`--delete PATH`** — delete file on camera via CHDK Lua
+- **`--download REMOTE LOCAL`** — download file from camera via CHDK Lua
+- **`--exec SCRIPT`** — execute arbitrary Lua on camera, read result
+- **Auto MOV cleanup** — deletes leftover 0-byte MOV files at session start with camera reboot
+- **1-second audio mute** — eliminates startup cracks from SSIO DMA initialization
+
+### Fixed
+
+- **execute_script** — transaction ID mismatch and missing null terminator
+- **read_script_msg** — CHDK returns raw data (no header on this camera)
+- **Beeping on stop** — restore +0x80=1 before StopMovieRecord
+
+### Technical
+
+- SSIO DMA hardware path: Mic → WM1400 → I2S → 0xC0220088 → SSIO DMA (0xC0820500) → RAM buffer (0x43DE9FA8)
+- Audio format: 44100 Hz, mono, 16-bit signed PCM, 88200 bytes per 1-second chunk
+- Minimal SD writes: 0-byte MOV file created for audio pipeline init, auto-cleaned
+- ISP color shift: FAT writes before recording corrupt display; fixed via delete+reboot sequence
+
 ## [0.2.0] - 2026-03-16
 
 ### Summary

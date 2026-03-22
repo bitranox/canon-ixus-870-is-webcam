@@ -55,19 +55,39 @@ The webcam module intercepts H.264 frames from the camera's native video recordi
 
 6. **Zoom** -- Zoom requests arrive piggybacked on frame requests (flag 0x4 in PTP param3, delta in param4). The PTP handler spawns a one-shot DryOS task via `CreateTask` that calls `shooting_set_zoom_rel()` -- the PTP handler returns immediately with a frame while the zoom motor runs concurrently.
 
+## Audio Capture
+
+The camera's microphone audio is captured via the SSIO (Synchronized Serial I/O) DMA engine:
+
+1. **SSIO DMA** -- the WM1400 codec sends PCM samples via I2S through register `0xC0220088`. The SSIO DMA engine (`0xC0820500`) transfers samples to a RAM buffer at `0x43DE9FA8` (88200 bytes = 1 second at 44100Hz mono 16-bit).
+
+2. **msg 8 intercept** -- `spy_audio_msg8()` in `movie_rec.c` hooks message 8 in `movie_record_task`, which delivers audio chunks (buffer pointer + size) once per second.
+
+3. **Per-frame read** -- `spy_ring_write()` reads 2940 bytes per video frame (88200/30) from the DMA buffer into shared memory at `0xFE000`.
+
+4. **PTP piggybacking** -- `ptp.c` sends video (zero-copy from ring buffer) then audio (2940 bytes from shared memory) as two USB transfers in one PTP data phase. No extra round-trip.
+
+5. **+0x80=2 trick** -- task_MovWrite case 2 checks `==1` (skips video write at 2), cases 4/5/6 check `!=0` (run audio at 2). This blocks video SD writes while keeping the audio pipeline alive.
+
 ## PC Side
 
 The bridge decodes H.264 and presents the video:
 
-1. **PTP client** -- polls frames over USB using CHDK opcode `0x9999` (sub-command `GetMJPEGFrame`). Each response contains one H.264 access unit in AVCC format.
+1. **PTP client** -- polls frames over USB using CHDK opcode `0x9999` (sub-command `GetMJPEGFrame`). Each response contains one H.264 access unit followed by 2940 bytes of PCM audio.
 
-2. **H.264 decode** -- FFmpeg `libavcodec` decodes AVCC frames to YUV420P. SPS/PPS are extracted from the camera's first-frame data and prepended as an `avcC` extradata blob. The decoder discards the first ~14 P-frames until the first natural IDR keyframe arrives (~0.5s startup delay).
+2. **Audio split** -- the bridge strips the last 2940 bytes from each frame as audio data (44100Hz mono 16-bit PCM). First 1 second is muted to avoid startup cracks.
 
-3. **Frame processing** -- YUV420P is converted to RGB24 and upscaled from 640x480 to 1280x720 using bilinear interpolation.
+3. **H.264 decode** -- FFmpeg `libavcodec` decodes AVCC frames to YUV420P. SPS/PPS are extracted from the camera's first-frame data and prepended as an `avcC` extradata blob. The decoder discards the first ~14 P-frames until the first natural IDR keyframe arrives (~0.5s startup delay).
 
-4. **Preview window** -- Win32 GDI window with `StretchDIBits`. Captures keyboard and mouse wheel input for zoom control.
+4. **Frame processing** -- YUV420P is converted to RGB24 and upscaled from 640x480 to 1280x720 using bilinear interpolation.
 
-5. **Virtual webcam** -- DirectShow source filter registered as "CHDK Webcam", visible in all video conferencing apps.
+5. **Preview window** -- Win32 GDI window with `StretchDIBits`. Captures keyboard and mouse wheel input for zoom control.
+
+6. **Virtual webcam** -- DirectShow source filter registered as "CHDK Webcam", visible in all video conferencing apps.
+
+7. **Audio output** -- optional WASAPI playback through PC speakers (`--audio-out`). Converts mono 16-bit to device format (typically stereo 32-bit float).
+
+8. **MKV recorder** -- optional recording of video + audio to MKV file via FFmpeg libavformat (`--record FILE`).
 
 ## PTP Protocol
 

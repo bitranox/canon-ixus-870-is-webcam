@@ -284,7 +284,13 @@ The IXUS 870 IS has 10 zoom positions (28-112mm equivalent). Zoom runs asynchron
 | `--debug` | off | Per-frame CSV debug logging to stderr |
 | `--timeout N` | none | Exit after N seconds (graceful shutdown) |
 | `--dump-frames DIR` | none | Save raw H.264 frames to DIR |
+| `--record FILE` | none | Record video + audio to MKV file |
+| `--audio-out` | off | Play camera audio through PC speakers (WASAPI) |
 | `--upload LOCAL REMOTE` | none | Upload file to camera SD card (repeatable) |
+| `--download REMOTE LOCAL` | none | Download file from camera |
+| `--delete PATH` | none | Delete file on camera |
+| `--ls PATH` | none | List directory on camera |
+| `--exec SCRIPT` | none | Execute Lua script on camera |
 | `--reboot` | off | Reboot camera after upload |
 
 ## Development Workflow
