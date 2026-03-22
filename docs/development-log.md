@@ -4043,9 +4043,65 @@ Mic → WM1400 → I2S → 0xC0220088 → SSIO DMA (0xC0820500)
     → sub_FF92FDF0 → task_MovWrite cases 4/5/6 → MOV file
 ```
 
-**Next steps for implementation:**
-1. In spy_audio_msg8: copy PCM data to a shared buffer (seqlock or similar)
-2. In webcam.c capture_frame_h264: read audio from shared buffer
-3. Piggyback audio on PTP response: param2=audio_size, data=[video][audio]
-4. Bridge: split at video_size boundary, send audio to WASAPI/DirectShow
-5. webcam.c stop_webcam: delete MOV file from SD card
+### v36a-h Implementation (2026-03-22)
+
+**Audio piggybacking — implemented and working:**
+
+Camera-side pipeline:
+```
+spy_audio_msg8 → saves DMA buffer ptr from msg 8
+spy_ring_write → reads 2940 bytes/frame from DMA buffer → shared mem (0xFE000)
+webcam.c       → copies video to frame_data_buf, appends 2940 bytes audio
+ptp.c          → sends combined [video][audio] as one PTP response
+```
+
+Bridge-side:
+```
+ptp_client.cpp → strips last 2940 bytes as audio_data (fixed constant)
+main.cpp       → writes audio_data to audio_capture.wav (44.1kHz mono 16-bit)
+```
+
+**Audio format confirmed:** 44100Hz mono 16-bit PCM, 2940 bytes per video frame (88200/30), WAV playback verified correct.
+
+**Bridge file operations — implemented and working:**
+- `--ls PATH` — list directory on camera via CHDK Lua `os.idir()`
+- `--delete PATH` — delete file on camera via CHDK Lua `os.remove()`
+- `--download REMOTE LOCAL` — download file via Lua `io.open()`/`write_usb_msg()`
+- `--exec SCRIPT` — execute arbitrary Lua on camera, read result
+
+**execute_script fixes:**
+- Transaction ID in data packet must match command packet (was `tid+1`, fixed to `tid`)
+- Script data must be null-terminated
+- CHDK on this camera returns raw message data (no header), not the documented [type][subtype][id][size][data] format
+
+**MOV file management:**
+- Minimal-write audio path creates 0-byte MOV file on SD (case 1 init needed for SSIO DMA)
+- `+0x80=2` blocks all video writes; audio metadata writes go nowhere meaningful
+- MOV files always 0 bytes (confirmed)
+- Camera-side `remove()` doesn't work from CHDK modules (not linked)
+- Camera-side `DeleteFile_Fut` fails (async path buffer on stack)
+- Bridge-side Lua `os.remove()` works when called separately
+- **Known issue:** running Lua filesystem ops (`os.idir`/`os.stat`/`os.remove`) in the same PTP session before `start_webcam` causes persistent display color shifting during streaming
+- **Workaround:** run `--delete` as a separate bridge invocation before the streaming session
+
+**Performance (v36h):**
+
+| Metric | Value |
+|--------|-------|
+| Video FPS | 29.1-29.8 |
+| Video frames (10s) | 277-282 |
+| Startup drops | 14 (normal, pre-IDR) |
+| Audio per frame | 2940 bytes |
+| Audio sample rate | 44100 Hz |
+| Audio channels | 1 (mono) |
+| Audio bit depth | 16-bit signed PCM |
+| Audio duration (10s session) | 9.7-9.9 seconds |
+| SD writes during streaming | 0 bytes (video), ~0 bytes (audio metadata) |
+| MOV file size | 0 bytes |
+
+**Remaining work:**
+1. WASAPI real-time audio output on bridge
+2. DirectShow audio pin for virtual webcam
+3. A/V synchronization
+4. Investigate Lua-before-recording color shift root cause
+5. Optimize MOV cleanup (avoid separate --delete invocation)

@@ -471,6 +471,41 @@ Each gap aligns with `(nal_frame_count % 30) == 1` — the debug frame interval 
 
 **Implication**: Any long-running camera operation (zoom, focus, exposure) triggered from PTP must run in a separate task to avoid blocking frame retrieval.
 
+## Fact #33: Audio Capture via SSIO DMA + msg 8 Intercept (2026-03-22)
+
+**Proven by**: On-camera diagnostic + WAV file playback confirmation.
+
+**Audio hardware path**:
+```
+Mic → WM1400 codec → I2S → 0xC0220088 → SSIO DMA (0xC0820500)
+    → RAM buffer at 0x43DE9FA8 (88200 bytes, 1-second chunks)
+    → msg 8 in movie_record_task (intercepted by spy_audio_msg8)
+```
+
+**Audio format**: 44100Hz mono 16-bit signed PCM, 2940 bytes per video frame.
+
+**+0x80=2 trick**: task_MovWrite case 2 checks `==1` (skips write at 2), cases 4/5/6 check `!=0` (run at 2). This blocks video SD writes while keeping the audio pipeline alive. Drain cleanup checks `==1` so it's also skipped.
+
+**Minimal-write audio path**: spy_suppress_mov is a no-op (case 1 runs for SSIO DMA init). Case 1 creates a 0-byte MOV file on SD. All video writes blocked by +0x80=2. MOV deleted via bridge `--delete` command.
+
+**SSIO hardware registers**:
+- 0xC0224100: SSIO controller enable
+- 0xC0820500: SSIO DMA control
+- 0xC0820540/544: DMA config
+- 0xC0820560-56C: DMA buffer addresses
+
+**Known issue**: Running CHDK Lua filesystem operations (`os.idir`/`os.stat`/`os.remove`) in the same PTP session before `start_webcam` causes persistent display color shifting during streaming. Cleanup must run as a separate bridge invocation.
+
+## Fact #34: Bridge File Operations via CHDK PTP (2026-03-22)
+
+**Proven by**: Successful file listing, deletion, and download from camera.
+
+**CHDK PTP script execution**: `ExecuteScript` command requires null-terminated script data with transaction ID matching the command packet. CHDK on this camera returns raw message data from `ReadScriptMsg` (no [type][subtype][id][size] header).
+
+**Working commands**: `os.remove(path)`, `os.stat(path)`, `os.idir(path)` (without trailing slash), `io.open(path)`, `write_usb_msg(data)`.
+
 ## What Needs to Happen Next
 
-1. **Virtual webcam integration**: Connect the H.264 decode output to a DirectShow virtual webcam filter for use in video conferencing apps.
+1. **WASAPI real-time audio output** on bridge
+2. **DirectShow audio pin** for virtual webcam
+3. **A/V synchronization**

@@ -559,9 +559,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // --- Clean up leftover 0-byte MOV files from previous session ---
-    // TODO: re-enable after fixing color issue
-    // Cleanup disabled — Lua filesystem ops before recording may cause display glitch
+    // MOV cleanup: NOT done automatically before streaming.
+    // Lua filesystem ops before start_webcam cause display color shifting
+    // that persists throughout the session (even across PTP reconnects).
+    // The 0-byte MOV file from the audio minimal-write path is harmless.
+    // To clean up manually: chdk-webcam.exe --delete "A/DCIM/100CANON/MVI_XXXX.MOV"
 
     // --- Start webcam streaming on camera ---
     printf("Starting webcam on camera (quality=%d)...\n", opts.jpeg_quality);
