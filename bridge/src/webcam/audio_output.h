@@ -3,6 +3,7 @@
 // Usage: init(sample_rate, channels, bits), write(data, size), shutdown()
 
 #include <cstdint>
+#include <string>
 
 namespace webcam {
 
@@ -12,8 +13,10 @@ public:
     ~AudioOutput();
 
     // Initialize WASAPI output device
+    // device_name: substring match for output device (empty = default)
     // Returns true on success
-    bool init(uint32_t sample_rate = 44100, uint16_t channels = 1, uint16_t bits = 16);
+    bool init(uint32_t sample_rate = 44100, uint16_t channels = 1, uint16_t bits = 16,
+              const std::string& device_name = "");
 
     // Write PCM samples to output buffer
     void write(const uint8_t* data, size_t size);

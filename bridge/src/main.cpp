@@ -180,6 +180,7 @@ struct Options {
     std::string ls_path;     // directory to list
     bool reboot = false;
     bool audio_out = false;   // play audio through speakers
+    std::string audio_device; // WASAPI output device name (substring match)
     std::string record_file;  // record video+audio to file
     std::string exec_script;  // Lua script to execute on camera
 };
@@ -291,6 +292,9 @@ static Options parse_args(int argc, char* argv[]) {
         } else if (arg == "--reboot") {
             opts.reboot = true;
         } else if (arg == "--audio-out") {
+            opts.audio_out = true;
+        } else if (arg == "--audio-device" && i + 1 < argc) {
+            opts.audio_device = argv[++i];
             opts.audio_out = true;
         } else if (arg == "--record" && i + 1 < argc) {
             opts.record_file = argv[++i];
@@ -627,7 +631,7 @@ int main(int argc, char* argv[]) {
     // Initialize WASAPI audio output if requested
     webcam::AudioOutput audio_out;
     if (opts.audio_out) {
-        if (!audio_out.init(44100, 1, 16)) {
+        if (!audio_out.init(44100, 1, 16, opts.audio_device)) {
             fprintf(stderr, "WARNING: Failed to initialize audio output\n");
         }
     }

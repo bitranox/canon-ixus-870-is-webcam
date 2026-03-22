@@ -41,7 +41,8 @@ AudioOutput::~AudioOutput() {
     delete impl_;
 }
 
-bool AudioOutput::init(uint32_t sample_rate, uint16_t channels, uint16_t bits) {
+bool AudioOutput::init(uint32_t sample_rate, uint16_t channels, uint16_t bits,
+                        const std::string& device_name) {
     if (initialized_) return true;
 
     HRESULT hr;
@@ -61,10 +62,54 @@ bool AudioOutput::init(uint32_t sample_rate, uint16_t channels, uint16_t bits) {
         return false;
     }
 
-    hr = impl_->enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &impl_->device);
-    if (FAILED(hr)) {
-        fprintf(stderr, "AudioOutput: No default audio output device: 0x%08X\n", (unsigned)hr);
-        return false;
+    if (!device_name.empty()) {
+        // Find device by name substring
+        IMMDeviceCollection* collection = nullptr;
+        hr = impl_->enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection);
+        if (SUCCEEDED(hr) && collection) {
+            UINT count = 0;
+            collection->GetCount(&count);
+            for (UINT i = 0; i < count; i++) {
+                IMMDevice* dev = nullptr;
+                collection->Item(i, &dev);
+                if (!dev) continue;
+                IPropertyStore* props = nullptr;
+                dev->OpenPropertyStore(STGM_READ, &props);
+                if (props) {
+                    PROPVARIANT name;
+                    PropVariantInit(&name);
+                    // PKEY_Device_FriendlyName
+                    PROPERTYKEY key = {{0xa45c254e,0xdf1c,0x4efd,{0x80,0x20,0x67,0xd1,0x46,0xa8,0x50,0xe0}},14};
+                    if (SUCCEEDED(props->GetValue(key, &name)) && name.vt == VT_LPWSTR) {
+                        // Convert wide string to narrow for comparison
+                        char narrow[256] = {0};
+                        WideCharToMultiByte(CP_UTF8, 0, name.pwszVal, -1, narrow, 255, nullptr, nullptr);
+                        if (strstr(narrow, device_name.c_str())) {
+                            impl_->device = dev;
+                            fprintf(stderr, "AudioOutput: selected device: %s\n", narrow);
+                            PropVariantClear(&name);
+                            props->Release();
+                            break;
+                        }
+                    }
+                    PropVariantClear(&name);
+                    props->Release();
+                }
+                dev->Release();
+            }
+            collection->Release();
+        }
+        if (!impl_->device) {
+            fprintf(stderr, "AudioOutput: device '%s' not found, using default\n", device_name.c_str());
+        }
+    }
+
+    if (!impl_->device) {
+        hr = impl_->enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &impl_->device);
+        if (FAILED(hr)) {
+            fprintf(stderr, "AudioOutput: No default audio output device: 0x%08X\n", (unsigned)hr);
+            return false;
+        }
     }
 
     hr = impl_->device->Activate(IID_IAudioClient, CLSCTX_ALL, nullptr,
