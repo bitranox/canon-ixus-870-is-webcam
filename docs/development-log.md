@@ -4146,7 +4146,17 @@ main.cpp       → writes audio_data to audio_capture.wav (44.1kHz mono 16-bit)
 | SD writes during streaming | 0 bytes |
 | MOV file | 0 bytes (auto-deleted at next session) |
 
+### v36p-s Implementation (2026-03-22, continued)
+
+**--record FILE.mkv (v36p):** Saves H.264 video + PCM audio to MKV via FFmpeg libavformat. Uses hardcoded Canon IXUS 870 SPS/PPS as codec extradata. AVCC→Annex B conversion. 30s test: 39MB MKV confirmed working.
+
+**--audio-out (v36q):** WASAPI real-time audio output. Converts mono 16-bit 44100Hz to device format (typically stereo 32-bit float 48000Hz). Nearest-neighbor resampling for sample rate conversion.
+
+**Virtual microphone shared memory (v36r):** `VirtualMic` writes PCM to named shared memory "CHDKMicrophoneAudio" as a ring buffer (32-byte header + 352KB data). Active when virtual webcam is enabled. Companion DirectShow filter reads from this shared memory.
+
+**DirectShow audio source filter (v36s, WIP):** `chdk_mic.dll` in `bridge/chdk_mic/`. Registers as "CHDK Microphone" in `CLSID_AudioInputDeviceCategory`. Implements IBaseFilter, IPin, IAMStreamConfig, IKsPropertySet. Worker thread reads from shared memory ring buffer and delivers via IMemInputPin. Build errors remaining (MSVC WAVEFORMATEX syntax issues).
+
 **Remaining work:**
-1. WASAPI real-time audio output on bridge
-2. DirectShow audio pin for virtual webcam
+1. Fix DirectShow DLL build errors
+2. Test "CHDK Microphone" in Zoom/Teams
 3. A/V synchronization
