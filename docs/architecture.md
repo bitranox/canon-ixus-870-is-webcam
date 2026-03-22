@@ -105,8 +105,10 @@ Response: param1=0 (success), param4=0xBEEF (marker)
 ```
 Command:  opcode=0x9999, param1=15, param2=0, param3=flags, param4=zoom_delta
 Response: param1=frame_size, param2=active, param3=gf_rc
-Data:     H.264 AVCC frame (4-byte BE length prefix + NAL units)
+Data:     [H.264 AVCC frame][2940 bytes PCM audio]
 ```
+
+The data phase contains video followed by exactly 2940 bytes of audio (44100Hz mono 16-bit PCM, one frame's worth = 88200/30). The bridge strips the last 2940 bytes as audio. First 30 frames (~1s) have silence instead of audio (startup mute).
 
 Flags (param3, bitmask): `0x4` = WEBCAM_ZOOM (param4 = signed zoom delta)
 
@@ -139,3 +141,18 @@ The ring buffer pointer is passed directly from camera RAM to the USB DMA engine
 1. The encoder completes writing before `spy_ring_write` publishes the pointer
 2. Ring buffer slots are 256KB -- recycling takes many frames at 30fps
 3. The seqlock detects mid-read overwrites (sequence changes during read)
+
+## A/V Synchronization
+
+Audio and video are naturally synchronized at the frame level:
+
+- Each video frame carries exactly **2940 bytes** of audio (1/30th of a second at 44100Hz)
+- `spy_ring_write` reads audio from the SSIO DMA buffer linearly, advancing by 2940 bytes per frame
+- The PTP response bundles video + audio atomically -- no separate round-trips
+
+**Startup timing:**
+- Video: first decoded frame appears after ~0.5s (14 P-frames discarded before first IDR)
+- Audio: first 1.0s muted (SSIO DMA startup cracks)
+- Net: audio starts ~0.5s after video -- barely noticeable for webcam use
+
+**MKV recording:** Audio samples are timestamped proportionally to frame count. Empty audio (mute period) is written as silence, maintaining continuous timestamps. No A/V drift over time.

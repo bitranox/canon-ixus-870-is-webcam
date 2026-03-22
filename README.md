@@ -99,15 +99,30 @@ When the preview window is focused:
 - **Keyboard:** `+` / `-` keys (or numpad `+` / `-`) to zoom in/out
 - **Mouse wheel:** scroll up to zoom in, scroll down to zoom out
 
-### Audio in Conferencing Apps
+### Audio in Conferencing Apps (Zoom, Teams, OBS)
 
-The camera captures 44.1kHz mono audio from its built-in microphone. To use it in Zoom, Teams, or OBS:
+The camera captures 44.1kHz mono audio from its built-in microphone. To route it as a virtual microphone for conferencing apps:
 
-1. Install [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free)
-2. Run: `chdk-webcam.exe --audio-out`
-3. In the conferencing app: select **"CHDK Webcam"** for video, **"CABLE Output"** for microphone
+**One-time setup:**
+1. Download [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free, ~1MB)
+2. Run `VBCABLE_Setup_x64.exe` as Administrator
+3. Reboot when prompted
 
-To record video + audio to a file: `chdk-webcam.exe --record output.mkv`
+**Usage:**
+1. Run: `chdk-webcam.exe --audio-out`
+2. In Windows Sound Settings: set **"CABLE Input"** as the default playback device
+   (or in the bridge's WASAPI, it outputs to the default device)
+3. In Zoom/Teams/OBS:
+   - Video: select **"CHDK Webcam"**
+   - Microphone: select **"CABLE Output (VB-Audio Virtual Cable)"**
+
+**Tip:** To hear the camera audio yourself while streaming, use Windows Sound Settings > CABLE Input > Properties > Listen > "Listen to this device" and select your speakers.
+
+**Alternative — record to file:**
+```
+chdk-webcam.exe --record output.mkv
+```
+Saves H.264 video + PCM audio to a single MKV file.
 
 ## Documentation
 
