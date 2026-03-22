@@ -559,11 +559,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // MOV cleanup: NOT done automatically before streaming.
-    // Lua filesystem ops before start_webcam cause display color shifting
-    // that persists throughout the session (even across PTP reconnects).
-    // The 0-byte MOV file from the audio minimal-write path is harmless.
-    // To clean up manually: chdk-webcam.exe --delete "A/DCIM/100CANON/MVI_XXXX.MOV"
+    // MOV cleanup NOT automatic — FAT filesystem writes (os.remove) before
+    // streaming corrupt ISP color processing (color shift in actual video data,
+    // visible on both LCD and PC preview). Only happens when a file is actually
+    // deleted, not when cleanup finds nothing. Likely shared DMA resources
+    // between SD card controller and ISP on Digic IV.
+    // The 0-byte MOV file from the audio path is harmless.
+    // Manual cleanup: chdk-webcam.exe --delete "A/DCIM/100CANON/MVI_XXXX.MOV"
 
     // --- Start webcam streaming on camera ---
     printf("Starting webcam on camera (quality=%d)...\n", opts.jpeg_quality);
