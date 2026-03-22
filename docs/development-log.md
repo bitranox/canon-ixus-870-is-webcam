@@ -3982,3 +3982,70 @@ Dump at frame 60 comparing +0x80=2 (no audio) vs SD writes enabled (audio alive)
 The audio producer only runs when the full recording pipeline is active (including file creation by case 1). The "audio buffer at 0x50000" found in the SD-writes-enabled scan was a false positive — likely FAT filesystem metadata that changes during file I/O, not PCM audio data.
 
 **Next step:** Deep RE of the SIO interrupt handler chain to find where the firmware accumulates PCM samples from the WM1400 codec. The audio hardware IS running (registers confirm active state), but the firmware path from SIO register reads → RAM buffer has not been traced.
+
+### Deep RE: SSIO Driver and Audio DMA (2026-03-22, continued)
+
+**SIO ISR (0xFF842754)** — just posts a semaphore. The SIO at 0xC0220080 is for codec CONTROL (I2C/SPI commands), not audio DATA.
+
+**SSIO Driver (SsioDrv.c, 0xFF8C0CD0)** — found a SECOND serial driver in the recording code area. This is the Synchronized Serial I/O driver handling I2S audio data transfer:
+- **0xC0224000** — SSIO controller (enable at +0x100)
+- **0xC0820000** — SSIO DMA engine (control at +0x500, buffers at +0x560)
+- **0xC0220088** — I2S audio data register (NOT 0xC0220080)
+- **0x3F210** — DMA descriptor struct in RAM
+- **0x70B4** — SSIO state struct (state machine: 0→1→2→3)
+
+Register pointer table at ROM 0xFFAE14D0 maps DMA descriptor fields to hardware registers at 0xC0820540-0xC082056C.
+
+Channel config table at ROM 0xFFAE1570:
+- Channel 0: register 0xC0220088, 4 DMA channels
+- Channel 1: register 0xC0220088, 1 DMA channel
+
+**SSIO DMA not programmable externally:** Direct writes to 0xC0820560 (buffer address) and 0xC0820500 (enable) get overwritten by firmware. The hardware requires the firmware's SSIO driver state machine to program it.
+
+### Audio Intercept: msg 8 in movie_record_task (2026-03-22)
+
+**BREAKTHROUGH:** movie_record_task message 8 IS the audio frame delivery mechanism.
+
+```asm
+loc_FF85E0E4:
+    LDR R1, [R0,#0x10]    ; R1 = audio chunk size
+    LDR R0, [R0,#4]       ; R0 = audio buffer pointer (uncached RAM)
+    BL  sub_FF92FDF0       ; process audio chunk
+```
+
+**sub_FF92FDF0** (156 bytes) accumulates chunk sizes at ring_buf+0x6C and copies audio data within the ring buffer via FUN_ff92fd78/FUN_ff92f88c.
+
+**On-camera test results (minimal-write path):**
+
+| Field | Value | Meaning |
+|-------|-------|---------|
+| M8CT | 3 | msg 8 fired 3 times in 3 seconds (once per second) |
+| M8P0 | 0x43DE9FA8 | Audio buffer pointer (uncached RAM, high address past video ring buffer) |
+| M8P1 | 0x00015888 (88200) | Chunk size = 44100 Hz × 2 bytes = 1 second mono 16-bit PCM |
+| W0 | 0x03D20450 | PCM samples: +1104, +978 |
+| W4 | 0xFED20013 | PCM samples: +19, -302 |
+| W7 | 0xFB70FB6C | PCM samples: -1172, -1168 |
+
+**Audio data confirmed as PCM:** small signed 16-bit values oscillating around zero — microphone signal captured at 44.1kHz.
+
+**Minimal-write path configuration:**
+- spy_suppress_mov: no-op (don't drain case 1 — let MOV file be created)
+- spy_ring_write: +0x80=2 (blocks video writes), keep real fd
+- msg 8 hook: spy_audio_msg8 intercepts audio pointer + size
+- Total SD writes: ~1KB file creation + ~500 bytes/sec audio metadata
+- Delete MOV file on webcam stop
+
+**Audio capture architecture:**
+```
+Mic → WM1400 → I2S → 0xC0220088 → SSIO DMA (0xC0820500)
+    → RAM buffer at 0x43DE9FA8 (88200 bytes, 1 second chunks)
+    → msg 8 in movie_record_task (spy_audio_msg8 intercepts here)
+    → sub_FF92FDF0 → task_MovWrite cases 4/5/6 → MOV file
+```
+
+**Next steps for implementation:**
+1. In spy_audio_msg8: copy PCM data to a shared buffer (seqlock or similar)
+2. In webcam.c capture_frame_h264: read audio from shared buffer
+3. Piggyback audio on PTP response: param2=audio_size, data=[video][audio]
+4. Bridge: split at video_size boundary, send audio to WASAPI/DirectShow
+5. webcam.c stop_webcam: delete MOV file from SD card
