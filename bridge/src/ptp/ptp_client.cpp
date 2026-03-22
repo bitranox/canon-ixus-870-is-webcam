@@ -939,12 +939,17 @@ bool PTPClient::get_frame(MJPEGFrame& frame) {
 }
 
 bool PTPClient::execute_script(const std::string& script) {
-    // Send script data
-    uint32_t params[5] = { CHDK_ExecuteScript, 0, 0, 0, 0 }; // param2=0 for Lua
+    // CHDK ExecuteScript: command with data phase containing null-terminated script.
+    // param1 = CHDK_ExecuteScript, param2 = language (0=Lua)
+    uint32_t params[5] = { CHDK_ExecuteScript, 0, 0, 0, 0 };
 
-    // Build data packet
+    // Send command first (this increments transaction_id)
+    if (!impl_->send_command(PTP_OC_CHDK, params, 2)) return false;
+
+    // Build data packet with SAME transaction_id as command
     std::vector<uint8_t> pkt;
-    int data_len = PTP_HEADER_SIZE + static_cast<int>(script.size());
+    int script_len = static_cast<int>(script.size()) + 1;  // include null terminator
+    int data_len = PTP_HEADER_SIZE + script_len;
     pkt.resize(data_len);
 
     memcpy(pkt.data() + 0, &data_len, 4);
@@ -952,12 +957,10 @@ bool PTPClient::execute_script(const std::string& script) {
     memcpy(pkt.data() + 4, &type, 2);
     uint16_t opcode = PTP_OC_CHDK;
     memcpy(pkt.data() + 6, &opcode, 2);
-    uint32_t tid = impl_->transaction_id + 1;
+    uint32_t tid = impl_->transaction_id;  // same as command
     memcpy(pkt.data() + 8, &tid, 4);
     memcpy(pkt.data() + PTP_HEADER_SIZE, script.data(), script.size());
-
-    // Send command first
-    if (!impl_->send_command(PTP_OC_CHDK, params, 2)) return false;
+    pkt[PTP_HEADER_SIZE + script.size()] = 0;  // null terminate
 
     // Send data
     int transferred = 0;
@@ -976,26 +979,14 @@ bool PTPClient::read_script_msg(std::string& msg) {
     if (!impl_->chdk_command(CHDK_ReadScriptMsg, 0, 0, 0, resp, &data)) {
         return false;
     }
-    if (resp.code != PTP_RC_OK || data.size() < 10) {
+    if (resp.code != PTP_RC_OK || data.size() < 2) {
         msg.clear();
-        return true;  // no message available (not an error)
+        return true;  // no message available
     }
-    // CHDK script message format:
-    // [4 bytes type][4 bytes subtype][4 bytes script_id][4 bytes size][data...]
-    // type 0 = none, type 1 = error, type 2 = return, type 3 = user (write_usb_msg)
-    uint32_t mtype = 0;
-    memcpy(&mtype, data.data(), 4);
-    if (mtype == 0) {
-        msg.clear();
-        return true;  // no message
-    }
-    if (data.size() > 16) {
-        msg.assign(reinterpret_cast<const char*>(data.data() + 16), data.size() - 16);
-        // Remove trailing null if present
-        while (!msg.empty() && msg.back() == '\0') msg.pop_back();
-    } else {
-        msg.clear();
-    }
+    // CHDK on this camera returns raw message data (no header)
+    // data.size() == 1 means "no message" (single null byte)
+    msg.assign(reinterpret_cast<const char*>(data.data()), data.size());
+    while (!msg.empty() && msg.back() == '\0') msg.pop_back();
     return true;
 }
 

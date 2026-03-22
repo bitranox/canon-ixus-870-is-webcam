@@ -173,6 +173,9 @@ struct Options {
     int timeout_sec = 0;
     std::string dump_dir;  // if non-empty, save raw H.264 frames to this directory
     std::vector<UploadEntry> uploads;
+    std::vector<std::string> delete_files;   // remote files to delete
+    std::vector<std::string> download_files; // pairs: remote, local
+    std::string ls_path;     // directory to list
     bool reboot = false;
     std::string exec_script;  // Lua script to execute on camera
 };
@@ -290,6 +293,13 @@ static Options parse_args(int argc, char* argv[]) {
             e.local_path = argv[++i];
             e.remote_path = argv[++i];
             opts.uploads.push_back(e);
+        } else if (arg == "--delete" && i + 1 < argc) {
+            opts.delete_files.push_back(argv[++i]);
+        } else if (arg == "--download" && i + 2 < argc) {
+            opts.download_files.push_back(argv[++i]); // remote
+            opts.download_files.push_back(argv[++i]); // local
+        } else if (arg == "--ls" && i + 1 < argc) {
+            opts.ls_path = argv[++i];
         } else if (arg == "--help") {
             print_usage(argv[0]);
             exit(0);
@@ -374,6 +384,84 @@ int main(int argc, char* argv[]) {
             return fail > 0 ? 1 : 0;
         }
         // Fall through to reboot
+    }
+
+    // --- Delete files on camera via Lua ---
+    if (!opts.delete_files.empty()) {
+        for (const auto& path : opts.delete_files) {
+            std::string lua = "os.remove('" + path + "')";
+            printf("Deleting %s ... ", path.c_str());
+            if (client.execute_script(lua)) {
+                Sleep(500);
+                printf("OK\n");
+            } else {
+                printf("FAILED: %s\n", client.get_last_error().c_str());
+            }
+        }
+        if (opts.uploads.empty() && !opts.reboot && opts.exec_script.empty()
+            && opts.ls_path.empty() && opts.download_files.empty()) {
+            client.disconnect();
+            return 0;
+        }
+    }
+
+    // --- Download files from camera via Lua ---
+    for (size_t di = 0; di + 1 < opts.download_files.size(); di += 2) {
+        const auto& remote = opts.download_files[di];
+        const auto& local = opts.download_files[di + 1];
+        // Use Lua to read file and send via write_usb_msg
+        std::string lua =
+            "f=io.open('" + remote + "','rb') "
+            "if f then d=f:read('*a') f:close() write_usb_msg(d) "
+            "else write_usb_msg('ERROR:not found') end";
+        printf("Downloading %s -> %s ... ", remote.c_str(), local.c_str());
+        if (client.execute_script(lua)) {
+            Sleep(1000);
+            std::string msg;
+            if (client.read_script_msg(msg) && !msg.empty()) {
+                if (msg.substr(0, 6) == "ERROR:") {
+                    printf("FAILED: %s\n", msg.c_str());
+                } else {
+                    FILE* f = fopen(local.c_str(), "wb");
+                    if (f) {
+                        fwrite(msg.data(), 1, msg.size(), f);
+                        fclose(f);
+                        printf("OK (%zu bytes)\n", msg.size());
+                    } else {
+                        printf("FAILED: can't write local file\n");
+                    }
+                }
+            } else {
+                printf("FAILED: no response\n");
+            }
+        } else {
+            printf("FAILED: %s\n", client.get_last_error().c_str());
+        }
+    }
+
+    // --- List directory on camera via Lua ---
+    if (!opts.ls_path.empty()) {
+        std::string lua =
+            "local s='' "
+            "for f in os.idir('" + opts.ls_path + "') do "
+            "  s=s..f..'\\n' "
+            "end "
+            "write_usb_msg(s)";
+        if (client.execute_script(lua)) {
+            Sleep(1000);
+            std::string msg;
+            if (client.read_script_msg(msg) && !msg.empty()) {
+                printf("%s", msg.c_str());
+            } else {
+                printf("(empty or no response)\n");
+            }
+        } else {
+            fprintf(stderr, "ERROR: ls failed: %s\n", client.get_last_error().c_str());
+        }
+        if (opts.uploads.empty() && !opts.reboot && opts.exec_script.empty()) {
+            client.disconnect();
+            return 0;
+        }
     }
 
     // --- Exec mode: run Lua script on camera and print output ---
@@ -1295,15 +1383,15 @@ int main(int argc, char* argv[]) {
     preview.shutdown();
     client.stop_webcam();
 
-    // Delete 0-byte MOV files AFTER recording stops (file closed).
-    // CHDK is still loaded — PTP connection still open before disconnect.
+    // Delete 0-byte MOV files via Lua after recording stops.
+    // Wait for finalization to complete, then delete via os.remove().
     printf("Cleaning up MOV files...\n");
-    std::this_thread::sleep_for(std::chrono::seconds(7));
+    std::this_thread::sleep_for(std::chrono::seconds(12));
     client.execute_script(
-        "for i=4240,4290 do "
+        "for i=4240,4300 do "
         "  os.remove('A/DCIM/100CANON/MVI_'..string.format('%04d',i)..'.MOV') "
         "end");
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    std::this_thread::sleep_for(std::chrono::seconds(1));
     vwebcam.shutdown();
 #ifdef HAS_FFMPEG
     h264dec.shutdown();
