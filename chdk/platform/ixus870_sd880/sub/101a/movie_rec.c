@@ -241,6 +241,8 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
         *(volatile unsigned int *)0x89B4 = 0;    // clear error flag
         *(volatile unsigned int *)0x89EC = 0;    // clear secondary error
 
+        // TODO: close fd + delete MOV file after audio init completes
+
         // Per-frame audio read: copy ~2940 bytes from DMA buffer to shared memory
         {
             volatile unsigned int *ashm = (volatile unsigned int *)AUDIO_SHM_BASE;

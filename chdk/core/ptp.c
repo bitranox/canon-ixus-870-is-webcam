@@ -1025,17 +1025,9 @@ static int handle_ptp(
                 int gf_rc = libwebcam->get_frame(&frame);
                 libwebcam->get_status(&wc_status);
                 if (gf_rc == 0 && frame.data && frame.size > 0) {
-                    // Audio piggybacking: hdr[14] at 0xFF000+56 holds audio bytes
-                    // appended after video in frame.data by webcam.c.
-                    volatile unsigned int *shm = (volatile unsigned int *)0x000FF000;
-                    unsigned int audio_sz = shm[14];
-                    unsigned int video_sz = frame.size;
-                    if (audio_sz > 0 && audio_sz < frame.size)
-                        video_sz = frame.size - audio_sz;
                     ptp.num_param = 4;
-                    ptp.param1 = video_sz;    // video-only size
-                    ptp.param2 = audio_sz;    // piggybacked audio size (0=none)
-                    // param3 = height, param4 = format|frame_num (unchanged)
+                    ptp.param1 = frame.size;
+                    ptp.param2 = frame.width;
                     ptp.param3 = frame.height;
                     // Encode format in high byte, frame_num in low 24 bits
                     ptp.param4 = ((unsigned)frame.format << 24) | (frame.frame_num & 0x00FFFFFF);

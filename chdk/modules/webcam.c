@@ -215,25 +215,31 @@ static int capture_frame_h264(void)
                         for (i = 0; i < copy_sz; i++)
                             frame_data_buf[i] = src[i];
 
-                        // Append audio from shared memory at 0xFE000
+                        // ALWAYS append exactly 2940 bytes of audio.
+                        // Before msg 8 fires (~1s), this is silence (zeros).
+                        // After msg 8, this is real PCM from the microphone.
+                        // Bridge always strips last 2940 bytes as audio.
                         {
                             volatile unsigned int *ashm = (volatile unsigned int *)0x000FE000;
                             unsigned int audio_avail = ashm[3];
-                            if (audio_avail > 0 && audio_avail <= 4000 &&
-                                copy_sz + audio_avail <= FRAME_BUF_SIZE) {
-                                volatile unsigned char *asrc =
-                                    (volatile unsigned char *)(0x000FE000 + 16);
-                                for (i = 0; i < audio_avail; i++)
-                                    frame_data_buf[copy_sz + i] = asrc[i];
-                                total = copy_sz + audio_avail;
-                                // Store audio size in seqlock hdr[14] for PTP
-                                hdr[14] = audio_avail;
-                            } else {
-                                total = copy_sz;
-                                hdr[14] = 0;
+
+                            if (copy_sz + 2940 <= FRAME_BUF_SIZE) {
+                                if (audio_avail > 0 && audio_avail <= 2940) {
+                                    volatile unsigned char *asrc =
+                                        (volatile unsigned char *)(0x000FE000 + 16);
+                                    for (i = 0; i < audio_avail; i++)
+                                        frame_data_buf[copy_sz + i] = asrc[i];
+                                    // Zero-pad if less than 2940
+                                    for (; i < 2940; i++)
+                                        frame_data_buf[copy_sz + i] = 0;
+                                } else {
+                                    // No audio yet — append silence
+                                    for (i = 0; i < 2940; i++)
+                                        frame_data_buf[copy_sz + i] = 0;
+                                }
+                                copy_sz += 2940;
                             }
                         }
-                        copy_sz = total;
                     }
                 }
 
