@@ -504,8 +504,37 @@ Mic → WM1400 codec → I2S → 0xC0220088 → SSIO DMA (0xC0820500)
 
 **Working commands**: `os.remove(path)`, `os.stat(path)`, `os.idir(path)` (without trailing slash), `io.open(path)`, `write_usb_msg(data)`.
 
-## What Needs to Happen Next
+## Fact #35: FAT Writes Before Recording Corrupt ISP (2026-03-22)
 
-1. **WASAPI real-time audio output** on bridge
-2. **DirectShow audio pin** for virtual webcam
-3. **A/V synchronization**
+**Proven by**: Multiple on-camera tests with display and PC preview.
+
+Lua filesystem operations (`os.idir`, `os.stat`, `os.remove`) performed in the same PTP session before `start_webcam` cause persistent color shifting in the video data (visible on both camera LCD and PC preview). The shift appears only when files are actually deleted, not on empty runs. Persists through warm standby — only a cold reboot fully resets ISP state.
+
+**Fix**: Auto-cleanup at session start: delete <1KB MOV files via Lua, then `reboot()`, wait for camera to reconnect. Guarantees clean ISP state every session.
+
+## Fact #36: WASAPI Audio Output + VB-Audio Virtual Cable (2026-03-22)
+
+**Proven by**: Successful audio routing to VB-Audio Virtual Cable device.
+
+WASAPI shared mode requires the device's native mix format (typically 48000Hz stereo 32-bit float). The bridge resamples 44100Hz mono 16-bit PCM to the device format using nearest-neighbor interpolation.
+
+`--audio-device NAME` selects output by substring match against device friendly names. Example: `--audio-device "VB-Audio"` routes to "CABLE Input (VB-Audio Virtual Cable)". Conferencing apps capture from "CABLE Output".
+
+**DirectShow audio capture not viable**: User-mode DirectShow filters cannot create system audio input devices on Windows 10/11 — requires kernel-mode audio driver. VB-Audio Virtual Cable (free, ~1MB) is the recommended solution.
+
+## Fact #37: A/V Sync — Frame-Level (2026-03-22)
+
+**Proven by**: MKV recording playback verification.
+
+Each video frame carries exactly 2940 bytes of audio (44100/30 × 2 bytes). Audio and video are bundled atomically in each PTP response. First 1 second of audio is muted (SSIO DMA startup cracks). Video decoding starts after ~0.5s (first IDR). No A/V drift over time — timestamps advance proportionally to frame count.
+
+## Project Status
+
+Feature-complete for webcam use:
+- 30fps H.264 video (zero-copy, zero artifacts)
+- 44.1kHz mono audio from camera microphone
+- Virtual webcam ("CHDK Webcam") via DirectShow
+- Virtual microphone via VB-Audio Virtual Cable
+- MKV recording (`--record`)
+- Camera file management (`--ls`, `--delete`, `--download`, `--exec`)
+- Auto MOV cleanup with reboot at session start

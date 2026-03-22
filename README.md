@@ -1,10 +1,10 @@
 # Canon IXUS 870 IS -- USB Webcam via CHDK
 
-Turn a Canon IXUS 870 IS into a USB webcam streaming H.264 video at 640x480@30fps, decoded and upscaled to 1280x720 on the PC. Uses a custom CHDK module on the camera and a PC-side bridge application with a preview window and optional DirectShow virtual webcam device.
+Turn a Canon IXUS 870 IS into a USB webcam with audio, streaming H.264 video at 640x480@30fps + 44.1kHz PCM audio from the camera's microphone. Video is decoded and upscaled to 1280x720 on the PC. Uses a custom CHDK module on the camera and a PC-side bridge application.
 
 **Camera:** Canon IXUS 870 IS / PowerShot SD880 IS / IXY DIGITAL 920 IS
 **Firmware:** 1.01a (Digic IV, ARM926EJ-S, DryOS)
-**Status:** v36p -- stable video + audio streaming with zoom control
+**Status:** v36w -- stable video + audio streaming with zoom control
 
 ## Performance
 
@@ -43,6 +43,7 @@ Turn a Canon IXUS 870 IS into a USB webcam streaming H.264 video at 640x480@30fp
 │                    ▼                                             │
 │                  PTP opcode 0x9999 (CHDK_GetMJPEGFrame)         │
 │                    │ sends H.264 AVCC frame (35-65 KB)          │
+│                    │ + 2940 bytes PCM audio piggybacked          │
 │                    │ zoom piggybacked on frame request           │
 └────────────────────┼─────────────────────────────────────────────┘
                      │ USB 2.0 High Speed (480 Mbps)
@@ -108,21 +109,22 @@ The camera captures 44.1kHz mono audio from its built-in microphone. To route it
 2. Run `VBCABLE_Setup_x64.exe` as Administrator
 3. Reboot when prompted
 
-**Usage:**
-1. Run: `chdk-webcam.exe --audio-out`
-2. In Windows Sound Settings: set **"CABLE Input"** as the default playback device
-   (or in the bridge's WASAPI, it outputs to the default device)
-3. In Zoom/Teams/OBS:
-   - Video: select **"CHDK Webcam"**
-   - Microphone: select **"CABLE Output (VB-Audio Virtual Cable)"**
+**Stream with audio:**
+```
+chdk-webcam.exe --audio-device "VB-Audio"
+```
 
-**Tip:** To hear the camera audio yourself while streaming, use Windows Sound Settings > CABLE Input > Properties > Listen > "Listen to this device" and select your speakers.
+**In Zoom/Teams/OBS:**
+- Video: select **"CHDK Webcam"**
+- Microphone: select **"CABLE Output (VB-Audio Virtual Cable)"**
 
-**Alternative — record to file:**
+**Tip:** To monitor the audio yourself, open Windows Sound Settings > CABLE Input > Properties > Listen > check "Listen to this device" and select your speakers.
+
+**Record to file:**
 ```
 chdk-webcam.exe --record output.mkv
 ```
-Saves H.264 video + PCM audio to a single MKV file.
+Saves H.264 video + PCM audio to a single MKV file. Can be combined with `--audio-device`.
 
 ## Documentation
 
@@ -132,7 +134,7 @@ Saves H.264 video + PCM audio to a single MKV file.
 | [Architecture](docs/architecture.md) | System design, PTP protocol, seqlock, H.264 format |
 | [Camera & CHDK Reference](docs/camera-and-chdk.md) | Firmware upgrade, CHDK installation, ALT mode |
 | [Firmware Reverse Engineering](docs/firmware-reverse-engineering.md) | Ghidra project, memory map, ISP architecture |
-| [Development Log](docs/development-log.md) | Full implementation history (v0-v35e) |
+| [Development Log](docs/development-log.md) | Full implementation history (v0-v36w) |
 | [Debug Frame Protocol](docs/debug-frame-protocol.md) | Camera-to-bridge debug channel (disabled during streaming) |
 | [Proven Facts](docs/proven-facts.md) | Verified addresses, data formats, constraints (32 facts) |
 | [Changelog](CHANGELOG.md) | Version history |

@@ -128,6 +128,22 @@ The camera must use the `libusb-win32` driver instead of the default Canon PTP/W
 
 This only needs to be done once per PC. To revert, use Device Manager to reinstall the original Canon driver.
 
+### 6. Install VB-Audio Virtual Cable (optional, for audio in conferencing apps)
+
+To route the camera's microphone audio to Zoom, Teams, or OBS as a virtual microphone:
+
+1. Download [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free, ~1MB)
+2. Extract and run `VBCABLE_Setup_x64.exe` as Administrator
+3. Reboot when prompted
+
+After installation, two new audio devices appear:
+- **"CABLE Input (VB-Audio Virtual Cable)"** -- the bridge sends audio here
+- **"CABLE Output (VB-Audio Virtual Cable)"** -- conferencing apps capture from here
+
+Usage: `chdk-webcam.exe --audio-device "VB-Audio"`
+
+This is optional. Audio is also saved to `audio_capture.wav` automatically, and `--record output.mkv` saves video + audio to a file without VB-Audio.
+
 ## Building
 
 ### CHDK (camera firmware)
@@ -237,6 +253,12 @@ bridge\build\Release\chdk-webcam.exe ^
 ```batch
 :: Preview window + virtual webcam
 bridge\build\Release\chdk-webcam.exe
+
+:: With audio routed to VB-Audio Virtual Cable (for Zoom/Teams)
+bridge\build\Release\chdk-webcam.exe --audio-device "VB-Audio"
+
+:: Record video + audio to MKV file
+bridge\build\Release\chdk-webcam.exe --record output.mkv
 
 :: Preview only, no virtual webcam
 bridge\build\Release\chdk-webcam.exe --no-webcam

@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Summary
 
-Audio capture from camera microphone + recording to MKV + bridge file management. Audio is piggybacked on video frames via a two-part PTP send — zero extra round-trips, zero-copy video preserved.
+Audio capture from camera microphone + recording to MKV + VB-Audio Virtual Cable integration + bridge file management. Audio is piggybacked on video frames via a two-part PTP send — zero extra round-trips, zero-copy video preserved. Full webcam with audio for Zoom/Teams/OBS.
 
 ### Added
 
@@ -16,6 +16,8 @@ Audio capture from camera microphone + recording to MKV + bridge file management
 - **Two-part PTP send** — video (zero-copy from ring buffer) then audio (from shared memory) in one data phase
 - **`--record FILE`** — save video + audio to MKV file via FFmpeg libavformat
 - **`--audio-out`** — play camera audio through PC speakers via WASAPI
+- **`--audio-device NAME`** — route audio to specific output (e.g., VB-Audio Virtual Cable)
+- **VB-Audio Virtual Cable integration** — camera mic appears as virtual microphone in Zoom/Teams/OBS
 - **`--ls PATH`** — list directory on camera via CHDK Lua
 - **`--delete PATH`** — delete file on camera via CHDK Lua
 - **`--download REMOTE LOCAL`** — download file from camera via CHDK Lua
@@ -35,6 +37,9 @@ Audio capture from camera microphone + recording to MKV + bridge file management
 - Audio format: 44100 Hz, mono, 16-bit signed PCM, 88200 bytes per 1-second chunk
 - Minimal SD writes: 0-byte MOV file created for audio pipeline init, auto-cleaned
 - ISP color shift: FAT writes before recording corrupt display; fixed via delete+reboot sequence
+- WASAPI resampling: 44100→device rate (nearest neighbor) + mono→stereo conversion
+- DirectShow audio not viable on Windows 10/11 (requires kernel driver); VB-Audio recommended
+- A/V sync: frame-level (±33ms), no drift — 2940 bytes audio per video frame
 
 ## [0.2.0] - 2026-03-16
 
