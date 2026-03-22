@@ -100,12 +100,12 @@
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <SupportJustMyCode></SupportJustMyCode>
       <UseFullPaths>false</UseFullPaths>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;HAS_TURBOJPEG;HAS_FFMPEG;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;HAS_TURBOJPEG;HAS_FFMPEG;HAS_AVFORMAT;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
     </ClCompile>
     <ResourceCompile>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;HAS_TURBOJPEG;HAS_FFMPEG;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;HAS_TURBOJPEG;HAS_FFMPEG;HAS_AVFORMAT;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>C:\projects\ixus870IS\bridge\src;C:\vcpkg\installed\x64-windows\include\libusb-1.0;C:\vcpkg\installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
@@ -117,7 +117,7 @@
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Link>
-      <AdditionalDependencies>C:\vcpkg\installed\x64-windows\debug\lib\libusb-1.0.lib;C:\vcpkg\installed\x64-windows\debug\lib\turbojpeg.lib;C:\vcpkg\installed\x64-windows\debug\lib\avcodec.lib;C:\vcpkg\installed\x64-windows\debug\lib\avutil.lib;C:\vcpkg\installed\x64-windows\debug\lib\swscale.lib;C:\vcpkg\installed\x64-windows\lib\softcam.lib;ole32.lib;strmiids.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>C:\vcpkg\installed\x64-windows\debug\lib\libusb-1.0.lib;C:\vcpkg\installed\x64-windows\debug\lib\turbojpeg.lib;C:\vcpkg\installed\x64-windows\debug\lib\avcodec.lib;C:\vcpkg\installed\x64-windows\debug\lib\avutil.lib;C:\vcpkg\installed\x64-windows\debug\lib\swscale.lib;C:\vcpkg\installed\x64-windows\debug\lib\avformat.lib;C:\vcpkg\installed\x64-windows\lib\softcam.lib;ole32.lib;strmiids.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -144,14 +144,14 @@
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <SupportJustMyCode></SupportJustMyCode>
       <UseFullPaths>false</UseFullPaths>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;HAS_AVFORMAT;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <DebugInformationFormat>
       </DebugInformationFormat>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
     </ClCompile>
     <ResourceCompile>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;HAS_AVFORMAT;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>C:\projects\ixus870IS\bridge\src;C:\vcpkg\installed\x64-windows\include\libusb-1.0;C:\vcpkg\installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
@@ -163,7 +163,7 @@
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Link>
-      <AdditionalDependencies>C:\vcpkg\installed\x64-windows\debug\lib\libusb-1.0.lib;C:\vcpkg\installed\x64-windows\debug\lib\turbojpeg.lib;C:\vcpkg\installed\x64-windows\debug\lib\avcodec.lib;C:\vcpkg\installed\x64-windows\debug\lib\avutil.lib;C:\vcpkg\installed\x64-windows\debug\lib\swscale.lib;C:\vcpkg\installed\x64-windows\lib\softcam.lib;ole32.lib;strmiids.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>C:\vcpkg\installed\x64-windows\debug\lib\libusb-1.0.lib;C:\vcpkg\installed\x64-windows\debug\lib\turbojpeg.lib;C:\vcpkg\installed\x64-windows\debug\lib\avcodec.lib;C:\vcpkg\installed\x64-windows\debug\lib\avutil.lib;C:\vcpkg\installed\x64-windows\debug\lib\swscale.lib;C:\vcpkg\installed\x64-windows\debug\lib\avformat.lib;C:\vcpkg\installed\x64-windows\lib\softcam.lib;ole32.lib;strmiids.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <GenerateDebugInformation>false</GenerateDebugInformation>
@@ -190,14 +190,14 @@
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <SupportJustMyCode></SupportJustMyCode>
       <UseFullPaths>false</UseFullPaths>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;HAS_AVFORMAT;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <DebugInformationFormat>
       </DebugInformationFormat>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
     </ClCompile>
     <ResourceCompile>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;HAS_AVFORMAT;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>C:\projects\ixus870IS\bridge\src;C:\vcpkg\installed\x64-windows\include\libusb-1.0;C:\vcpkg\installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
@@ -209,7 +209,7 @@
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Link>
-      <AdditionalDependencies>C:\vcpkg\installed\x64-windows\debug\lib\libusb-1.0.lib;C:\vcpkg\installed\x64-windows\debug\lib\turbojpeg.lib;C:\vcpkg\installed\x64-windows\debug\lib\avcodec.lib;C:\vcpkg\installed\x64-windows\debug\lib\avutil.lib;C:\vcpkg\installed\x64-windows\debug\lib\swscale.lib;C:\vcpkg\installed\x64-windows\lib\softcam.lib;ole32.lib;strmiids.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>C:\vcpkg\installed\x64-windows\debug\lib\libusb-1.0.lib;C:\vcpkg\installed\x64-windows\debug\lib\turbojpeg.lib;C:\vcpkg\installed\x64-windows\debug\lib\avcodec.lib;C:\vcpkg\installed\x64-windows\debug\lib\avutil.lib;C:\vcpkg\installed\x64-windows\debug\lib\swscale.lib;C:\vcpkg\installed\x64-windows\debug\lib\avformat.lib;C:\vcpkg\installed\x64-windows\lib\softcam.lib;ole32.lib;strmiids.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <GenerateDebugInformation>false</GenerateDebugInformation>
@@ -237,12 +237,12 @@
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <SupportJustMyCode></SupportJustMyCode>
       <UseFullPaths>false</UseFullPaths>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;HAS_AVFORMAT;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
       <ObjectFileName>$(IntDir)</ObjectFileName>
       <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
     </ClCompile>
     <ResourceCompile>
-      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;HAS_TURBOJPEG;HAS_FFMPEG;HAS_AVFORMAT;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>C:\projects\ixus870IS\bridge\src;C:\vcpkg\installed\x64-windows\include\libusb-1.0;C:\vcpkg\installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
@@ -254,7 +254,7 @@
       <ProxyFileName>%(Filename)_p.c</ProxyFileName>
     </Midl>
     <Link>
-      <AdditionalDependencies>C:\vcpkg\installed\x64-windows\debug\lib\libusb-1.0.lib;C:\vcpkg\installed\x64-windows\debug\lib\turbojpeg.lib;C:\vcpkg\installed\x64-windows\debug\lib\avcodec.lib;C:\vcpkg\installed\x64-windows\debug\lib\avutil.lib;C:\vcpkg\installed\x64-windows\debug\lib\swscale.lib;C:\vcpkg\installed\x64-windows\lib\softcam.lib;ole32.lib;strmiids.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalDependencies>C:\vcpkg\installed\x64-windows\debug\lib\libusb-1.0.lib;C:\vcpkg\installed\x64-windows\debug\lib\turbojpeg.lib;C:\vcpkg\installed\x64-windows\debug\lib\avcodec.lib;C:\vcpkg\installed\x64-windows\debug\lib\avutil.lib;C:\vcpkg\installed\x64-windows\debug\lib\swscale.lib;C:\vcpkg\installed\x64-windows\debug\lib\avformat.lib;C:\vcpkg\installed\x64-windows\lib\softcam.lib;ole32.lib;strmiids.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -336,6 +336,10 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
     <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\preview_window.h" />
     <ClCompile Include="C:\projects\ixus870IS\bridge\src\webcam\virtual_webcam.cpp" />
     <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\virtual_webcam.h" />
+    <ClCompile Include="C:\projects\ixus870IS\bridge\src\webcam\audio_output.cpp" />
+    <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\audio_output.h" />
+    <ClCompile Include="C:\projects\ixus870IS\bridge\src\webcam\av_recorder.cpp" />
+    <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\av_recorder.h" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>

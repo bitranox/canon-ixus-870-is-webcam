@@ -25,6 +25,8 @@
 #ifdef HAS_FFMPEG
 #include "webcam/h264_decoder.h"
 #endif
+#include "webcam/audio_output.h"
+#include "webcam/av_recorder.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -177,6 +179,8 @@ struct Options {
     std::vector<std::string> download_files; // pairs: remote, local
     std::string ls_path;     // directory to list
     bool reboot = false;
+    bool audio_out = false;   // play audio through speakers
+    std::string record_file;  // record video+audio to file
     std::string exec_script;  // Lua script to execute on camera
 };
 
@@ -286,6 +290,10 @@ static Options parse_args(int argc, char* argv[]) {
             opts.dump_dir = argv[++i];
         } else if (arg == "--reboot") {
             opts.reboot = true;
+        } else if (arg == "--audio-out") {
+            opts.audio_out = true;
+        } else if (arg == "--record" && i + 1 < argc) {
+            opts.record_file = argv[++i];
         } else if (arg == "--exec" && i + 1 < argc) {
             opts.exec_script = argv[++i];
         } else if (arg == "--upload" && i + 2 < argc) {
@@ -616,6 +624,22 @@ int main(int argc, char* argv[]) {
     // Open audio WAV file for recording
     audio_wav_open("audio_capture.wav");
 
+    // Initialize WASAPI audio output if requested
+    webcam::AudioOutput audio_out;
+    if (opts.audio_out) {
+        if (!audio_out.init(44100, 1, 16)) {
+            fprintf(stderr, "WARNING: Failed to initialize audio output\n");
+        }
+    }
+
+    // Initialize AV recorder if requested
+    webcam::AVRecorder recorder;
+    if (!opts.record_file.empty()) {
+        if (!recorder.open(opts.record_file, 640, 480, 30, 44100, 1)) {
+            fprintf(stderr, "WARNING: Failed to open recorder: %s\n", opts.record_file.c_str());
+        }
+    }
+
     // --- Main streaming loop ---
     auto start_time = std::chrono::steady_clock::now();
     auto stats_interval = std::chrono::seconds(2);
@@ -770,9 +794,21 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Write piggybacked audio to WAV file
+        // Write piggybacked audio to WAV file + play through speakers + record
         if (!mjpeg.audio_data.empty()) {
             audio_wav_write(mjpeg.audio_data.data(), mjpeg.audio_data.size());
+            if (audio_out.is_initialized()) {
+                audio_out.write(mjpeg.audio_data.data(), mjpeg.audio_data.size());
+            }
+            if (recorder.is_open()) {
+                recorder.write_audio(mjpeg.audio_data.data(), mjpeg.audio_data.size());
+            }
+        }
+
+        // Record video frame
+        if (recorder.is_open() && mjpeg.format == ptp::FRAME_FMT_H264 && !mjpeg.data.empty()) {
+            bool is_idr = (mjpeg.data.size() >= 5 && (mjpeg.data[4] & 0x1F) == 5);
+            recorder.write_video(mjpeg.data.data(), mjpeg.data.size(), is_idr);
         }
 
         // Handle debug frames — not video, just diagnostic data
@@ -1418,6 +1454,7 @@ int main(int argc, char* argv[]) {
     }
 
     printf("\nStopping...\n");
+    recorder.close();
     audio_wav_close();
     if (g_debug_log) { fclose(g_debug_log); g_debug_log = nullptr; }
     preview.shutdown();

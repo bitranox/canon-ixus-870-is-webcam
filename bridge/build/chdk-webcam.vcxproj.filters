@@ -19,6 +19,12 @@
     <ClCompile Include="C:\projects\ixus870IS\bridge\src\webcam\virtual_webcam.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\projects\ixus870IS\bridge\src\webcam\audio_output.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\projects\ixus870IS\bridge\src\webcam\av_recorder.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="C:\projects\ixus870IS\bridge\src\ptp\ptp_client.h">
@@ -34,6 +40,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\virtual_webcam.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\audio_output.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="C:\projects\ixus870IS\bridge\src\webcam\av_recorder.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

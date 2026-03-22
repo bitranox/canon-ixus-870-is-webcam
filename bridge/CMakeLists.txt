@@ -40,6 +40,8 @@ find_path(AVUTIL_INCLUDE_DIR NAMES libavutil/frame.h)
 find_library(AVUTIL_LIBRARY NAMES avutil)
 find_path(SWSCALE_INCLUDE_DIR NAMES libswscale/swscale.h)
 find_library(SWSCALE_LIBRARY NAMES swscale)
+find_path(AVFORMAT_INCLUDE_DIR NAMES libavformat/avformat.h)
+find_library(AVFORMAT_LIBRARY NAMES avformat)
 
 # softcam (virtual webcam DirectShow filter)
 find_path(SOFTCAM_INCLUDE_DIR NAMES softcam/softcam.h)
@@ -60,6 +62,10 @@ set(WEBCAM_SOURCES
     src/webcam/preview_window.h
     src/webcam/virtual_webcam.cpp
     src/webcam/virtual_webcam.h
+    src/webcam/audio_output.cpp
+    src/webcam/audio_output.h
+    src/webcam/av_recorder.cpp
+    src/webcam/av_recorder.h
 )
 
 set(ALL_SOURCES
@@ -107,6 +113,13 @@ endif()
 if(AVCODEC_LIBRARY AND AVUTIL_LIBRARY AND SWSCALE_LIBRARY)
     target_link_libraries(chdk-webcam PRIVATE ${AVCODEC_LIBRARY} ${AVUTIL_LIBRARY} ${SWSCALE_LIBRARY})
     target_compile_definitions(chdk-webcam PRIVATE HAS_FFMPEG)
+    if(AVFORMAT_LIBRARY)
+        target_link_libraries(chdk-webcam PRIVATE ${AVFORMAT_LIBRARY})
+        target_compile_definitions(chdk-webcam PRIVATE HAS_AVFORMAT)
+        if(AVFORMAT_INCLUDE_DIR)
+            target_include_directories(chdk-webcam PRIVATE ${AVFORMAT_INCLUDE_DIR})
+        endif()
+    endif()
     message(STATUS "FFmpeg found — H.264 decoding enabled")
 else()
     message(WARNING "FFmpeg not found — H.264 decoding disabled")

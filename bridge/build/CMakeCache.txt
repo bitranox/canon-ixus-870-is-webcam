@@ -21,6 +21,12 @@ AVCODEC_INCLUDE_DIR:PATH=C:/vcpkg/installed/x64-windows/include
 AVCODEC_LIBRARY:FILEPATH=C:/vcpkg/installed/x64-windows/debug/lib/avcodec.lib
 
 //Path to a file.
+AVFORMAT_INCLUDE_DIR:PATH=C:/vcpkg/installed/x64-windows/include
+
+//Path to a library.
+AVFORMAT_LIBRARY:FILEPATH=C:/vcpkg/installed/x64-windows/debug/lib/avformat.lib
+
+//Path to a file.
 AVUTIL_INCLUDE_DIR:PATH=C:/vcpkg/installed/x64-windows/include
 
 //Path to a library.
