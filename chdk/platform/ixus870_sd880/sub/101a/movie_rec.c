@@ -111,11 +111,9 @@ static void __attribute__((used,noinline)) spy_cache_invalidate(unsigned char *p
 // (file close) from closing a stale fd if one exists from a previous recording.
 static void __attribute__((used,noinline)) spy_suppress_mov(void)
 {
-    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
-    if (hdr[0] == 0x52455753) {
-        *(volatile unsigned int *)0x89F0 = 1;           // ring_buf+0x88: drain mode
-        *(volatile unsigned int *)0x89B0 = 0xFFFFFFFF;  // ring_buf+0x48: fd = -1
-    }
+    // Minimal-write: don't drain case 1 — audio pipeline needs full init.
+    // +0x80=2 (set by spy_ring_write) blocks video SD writes.
+    // Case 1 creates a small MOV file (~1KB). Deleted on webcam stop.
 }
 
 // Check if webcam is active. Returns 1 to skip error path, 0 for normal error handling.
@@ -154,6 +152,47 @@ static void __attribute__((used,noinline)) spy_skip_movwrite(unsigned char *ptr,
         }
         ring[0x18/4] = new_consumed;           // consumed pointer
     }
+}
+
+// ============================================================
+// Audio capture via msg 8 intercept
+//
+// msg 8 in movie_record_task delivers audio chunks: (buffer_ptr, chunk_size).
+// Buffer is at uncached RAM (e.g. 0x43DE9FA8), filled continuously by SSIO DMA.
+// Chunk size = 88200 bytes = 1 second of 44100Hz mono 16-bit PCM.
+// msg 8 fires once per second, but the DMA fills the buffer continuously.
+//
+// We track the buffer pointer and read ~2940 bytes per video frame (30fps)
+// from spy_ring_write, storing them in shared memory for webcam.c.
+//
+// Shared audio memory layout at 0x000FE000 (4KB before seqlock at 0xFF000):
+//   [0]  audio_ptr   = DMA buffer pointer (set by spy_audio_msg8)
+//   [1]  audio_size  = chunk size (88200)
+//   [2]  audio_read  = our read offset within the chunk
+//   [3]  audio_avail = bytes of new audio available for webcam.c this frame
+//   [4..] audio_data = per-frame audio samples copied here for webcam.c
+// ============================================================
+
+#define AUDIO_SHM_BASE  0x000FE000
+#define AUDIO_DATA_OFF  16          // bytes 0-15 = header, 16+ = audio data
+#define AUDIO_PER_FRAME 2940        // 88200 / 30 = 2940 bytes per frame
+
+static void __attribute__((used,noinline)) spy_audio_msg8(unsigned int buf_ptr, unsigned int chunk_size)
+{
+    volatile unsigned int *ashm = (volatile unsigned int *)AUDIO_SHM_BASE;
+    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
+
+    // Save buffer info on every msg 8 call
+    if (hdr[0] == 0x52455753) {
+        ashm[0] = buf_ptr;
+        ashm[1] = chunk_size;
+        ashm[2] = 0;  // reset read offset for new chunk
+    }
+
+    // Call original firmware function
+    void (*real_fn)(unsigned int, unsigned int) =
+        (void (*)(unsigned int, unsigned int))0xFF92FDF0;
+    real_fn(buf_ptr, chunk_size);
 }
 
 // TakeSemaphore passthrough — calls firmware sub_FF8274B4 via function pointer.
@@ -196,11 +235,42 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
     if (hdr[0] == 0x52455753) {
         spy_cache_invalidate(ptr, size);
 
-        // Prevent SD card writes: clear task_MovWrite's is_open flag.
-        *(volatile unsigned int *)0x89E8 = 0;
-
-        // Clear drain mode so task_MovWrite processes frame messages normally.
+        // +0x80=2: blocks video writes (==1 check), audio cases run (!=0 check)
+        *(volatile unsigned int *)0x89E8 = 2;
         *(volatile unsigned int *)0x89F0 = 0;
+        *(volatile unsigned int *)0x89B4 = 0;    // clear error flag
+        *(volatile unsigned int *)0x89EC = 0;    // clear secondary error
+
+        // Per-frame audio read: copy ~2940 bytes from DMA buffer to shared memory
+        {
+            volatile unsigned int *ashm = (volatile unsigned int *)AUDIO_SHM_BASE;
+            unsigned int audio_ptr = ashm[0];
+            unsigned int audio_size = ashm[1];
+            unsigned int audio_read = ashm[2];
+
+            if (audio_ptr > 0x1000 && audio_size > 0) {
+                unsigned int bytes_to_read = AUDIO_PER_FRAME;
+                unsigned int remaining = audio_size - audio_read;
+                if (bytes_to_read > remaining)
+                    bytes_to_read = remaining;
+
+                if (bytes_to_read > 0) {
+                    // Copy from DMA buffer (already uncached) to shared memory
+                    volatile unsigned char *src = (volatile unsigned char *)(audio_ptr + audio_read);
+                    volatile unsigned char *dst = (volatile unsigned char *)(AUDIO_SHM_BASE + AUDIO_DATA_OFF);
+                    unsigned int i;
+                    for (i = 0; i < bytes_to_read; i++)
+                        dst[i] = src[i];
+
+                    ashm[2] = audio_read + bytes_to_read;  // advance read offset
+                    ashm[3] = bytes_to_read;               // bytes available this frame
+                } else {
+                    ashm[3] = 0;
+                }
+            } else {
+                ashm[3] = 0;
+            }
+        }
 
         // Determine actual H.264 frame size from AVCC length prefix.
         // MovieFrameGetter returns the 256KB chunk size, not encoded size.
@@ -311,7 +381,7 @@ void __attribute__((naked,noinline)) movie_record_task(){
  "loc_FF85E0E4:\n"
                  "LDR     R1, [R0,#0x10]\n"
                  "LDR     R0, [R0,#4]\n"
-                 "BL      sub_FF92FDF0\n"
+                 "BL      spy_audio_msg8\n"
                  "B       loc_FF85E120\n"
  "loc_FF85E0F4:\n"
                  "LDR     R0, [R4,#0x3C]\n"

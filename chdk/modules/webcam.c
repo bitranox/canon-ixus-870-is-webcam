@@ -202,14 +202,45 @@ static int capture_frame_h264(void)
                         copy_sz = total;
                     }
 
-                    // Zero-copy: pass ring buffer pointer directly to PTP.
-                    // No memcpy needed — seqlock guarantees frame is complete.
+                    // Copy video to frame_data_buf, then append audio.
+                    // This breaks zero-copy but enables audio piggybacking.
+                    // memcpy cost: ~1ms for 40KB frame (negligible vs 29ms PTP RTT).
+                    {
+                        unsigned int total = copy_sz;
+                        unsigned int i;
+
+                        // Copy video
+                        if (copy_sz > FRAME_BUF_SIZE - 4096)
+                            copy_sz = FRAME_BUF_SIZE - 4096; // leave room for audio
+                        for (i = 0; i < copy_sz; i++)
+                            frame_data_buf[i] = src[i];
+
+                        // Append audio from shared memory at 0xFE000
+                        {
+                            volatile unsigned int *ashm = (volatile unsigned int *)0x000FE000;
+                            unsigned int audio_avail = ashm[3];
+                            if (audio_avail > 0 && audio_avail <= 4000 &&
+                                copy_sz + audio_avail <= FRAME_BUF_SIZE) {
+                                volatile unsigned char *asrc =
+                                    (volatile unsigned char *)(0x000FE000 + 16);
+                                for (i = 0; i < audio_avail; i++)
+                                    frame_data_buf[copy_sz + i] = asrc[i];
+                                total = copy_sz + audio_avail;
+                                // Store audio size in seqlock hdr[14] for PTP
+                                hdr[14] = audio_avail;
+                            } else {
+                                total = copy_sz;
+                                hdr[14] = 0;
+                            }
+                        }
+                        copy_sz = total;
+                    }
                 }
 
                 if (s == hdr + 1) last_seq_a = seq_a;
                 else last_seq_b = seq_b;
 
-                hw_jpeg_data = src;
+                hw_jpeg_data = frame_data_buf;
                 hw_jpeg_size = copy_sz;
                 frame_width = 640;
                 frame_height = 480;
