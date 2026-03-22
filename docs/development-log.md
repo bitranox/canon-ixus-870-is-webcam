@@ -4045,19 +4045,20 @@ Mic → WM1400 → I2S → 0xC0220088 → SSIO DMA (0xC0820500)
 
 ### v36a-h Implementation (2026-03-22)
 
-**Audio piggybacking — implemented and working:**
+**Audio piggybacking — implemented and working (v36o final):**
 
 Camera-side pipeline:
 ```
-spy_audio_msg8 → saves DMA buffer ptr from msg 8
+spy_audio_msg8 → intercepts msg 8, saves DMA buffer ptr + chunk size
 spy_ring_write → reads 2940 bytes/frame from DMA buffer → shared mem (0xFE000)
-webcam.c       → copies video to frame_data_buf, appends 2940 bytes audio
-ptp.c          → sends combined [video][audio] as one PTP response
+webcam.c       → ZERO-COPY: passes ring buffer pointer directly to PTP (v35e code)
+ptp.c          → two-part PTP send: video (zero-copy) then audio (2940 bytes)
 ```
 
 Bridge-side:
 ```
 ptp_client.cpp → strips last 2940 bytes as audio_data (fixed constant)
+                  mutes first 30 frames (~1s) to eliminate startup cracks
 main.cpp       → writes audio_data to audio_capture.wav (44.1kHz mono 16-bit)
 ```
 
@@ -4099,9 +4100,53 @@ main.cpp       → writes audio_data to audio_capture.wav (44.1kHz mono 16-bit)
 | SD writes during streaming | 0 bytes (video), ~0 bytes (audio metadata) |
 | MOV file size | 0 bytes |
 
+### v36i-o Fixes (2026-03-22, continued)
+
+**Color shift root cause:** ISP state not fully reset between recording sessions. The +0x80=2 audio path leaves ISP in a dirty state that persists through warm standby. Only a cold reboot fully resets it. FAT filesystem writes (os.remove) also corrupt ISP if done before recording.
+
+**Fix:** Auto-cleanup at session start: delete <1KB MOV files via Lua `os.remove()`, then `reboot()`, wait for camera to reconnect. Guarantees clean ISP state every session.
+
+**Beeping on stop fix:** Restore +0x80=1 before calling StopMovieRecord. The value 2 caused the finalization to error/beep.
+
+**Zero-copy restoration (v36n):** Byte-by-byte video copy in webcam.c caused artifacts (seqlock race during slow copy). Fixed by restoring v35e zero-copy webcam.c and moving audio append to ptp.c. PTP now sends video (zero-copy from ring buffer via `data->send_data`) then audio (2940 bytes from shared memory) as two USB transfers in one PTP data phase. Zero artifacts confirmed.
+
+**Audio startup cracks (v36o):** First ~1 second of audio contains cracks from SSIO DMA startup. Bridge mutes first 30 frames (~1.0s). 700ms was tested insufficient; 1.0s confirmed clean.
+
+**Bridge file operations (v36f):**
+- `--ls PATH` — list directory via CHDK Lua `os.idir()`
+- `--delete PATH` — delete file via Lua `os.remove()`
+- `--download REMOTE LOCAL` — download via Lua `io.open()`/`write_usb_msg()`
+- `--exec SCRIPT` — execute arbitrary Lua, read result
+
+**execute_script fixes:**
+- Transaction ID in data packet must match command (was tid+1)
+- Script data must be null-terminated
+- CHDK returns raw message data (no header on this camera)
+- `os.idir()` needs path WITHOUT trailing slash
+
+**Known issues & constraints:**
+- FAT writes (os.remove) before recording corrupt ISP color processing
+- Cleanup must include reboot to reset ISP state
+- StopMovieRecord finalization takes ~5s ("Daten werden bearbeitet")
+- Camera powers off after finalization (warm standby)
+- 0-byte MOV file created per session, cleaned at next session start
+- `remove()` not available from CHDK modules (not linked)
+
+**Final performance (v36o):**
+
+| Metric | Value |
+|--------|-------|
+| Video FPS | 29.5-30.0 |
+| Video frames (10s) | 286 |
+| Video artifacts | Zero (zero-copy restored) |
+| Audio per frame | 2940 bytes |
+| Audio sample rate | 44100 Hz mono 16-bit |
+| Audio startup mute | 1.0 second |
+| Audio quality | Clean (no cracks after mute period) |
+| SD writes during streaming | 0 bytes |
+| MOV file | 0 bytes (auto-deleted at next session) |
+
 **Remaining work:**
 1. WASAPI real-time audio output on bridge
 2. DirectShow audio pin for virtual webcam
 3. A/V synchronization
-4. Investigate Lua-before-recording color shift root cause
-5. Optimize MOV cleanup (avoid separate --delete invocation)
