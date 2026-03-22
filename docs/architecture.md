@@ -5,38 +5,44 @@
 ## System Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  CANON IXUS 870 IS (Digic IV, ARM926EJ-S, DryOS)               │
-│                                                                  │
-│  CCD ──► ISP ──► JPCORE H.264 encoder (640x480 @ 30fps)        │
-│  10MP    Image          │                                        │
-│          Signal         ▼                                        │
-│          Proc    Ring buffer (256KB slots, AVCC format)          │
-│                         │                                        │
-│                  spy_ring_write (movie_rec.c)                    │
-│                    │ cache invalidate + AVCC parse               │
-│                    │ dual-slot seqlock at 0xFF000                │
-│                    │ suppresses SD writes (+0x80=0)              │
-│                    ▼                                             │
-│                  capture_frame_h264 (webcam.c)                   │
-│                    │ polls seqlock with msleep(10)               │
-│                    │ zero-copy: passes ring buffer ptr to PTP    │
-│                    ▼                                             │
-│                  PTP opcode 0x9999 (CHDK_GetMJPEGFrame)         │
-│                    │ sends H.264 AVCC frame (35-65 KB)          │
-│                    │ zoom piggybacked on frame request           │
-└────────────────────┼─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  CANON IXUS 870 IS (Digic IV, ARM926EJ-S, DryOS)                    │
+│                                                                      │
+│  VIDEO PATH                          AUDIO PATH                      │
+│  ──────────                          ──────────                      │
+│  CCD ──► ISP ──► JPCORE H.264       Mic ──► WM1400 ──► I2S          │
+│  10MP    Image     (640x480@30fps)              │                    │
+│          Signal         │                       ▼                    │
+│          Proc           ▼              SSIO DMA (0xC0820500)         │
+│               Ring buffer (256KB)               │                    │
+│                         │                       ▼                    │
+│                         │              RAM buffer (0x43DE9FA8)       │
+│                         │              88200 bytes/sec (44.1kHz)     │
+│                         │                       │                    │
+│                  spy_ring_write (movie_rec.c) ◄─┘                    │
+│                    │ cache invalidate + AVCC parse                    │
+│                    │ dual-slot seqlock at 0xFF000                     │
+│                    │ reads 2940 bytes audio/frame to 0xFE000         │
+│                    │ +0x80=2: blocks video writes, keeps audio alive  │
+│                    ▼                                                  │
+│                  PTP opcode 0x9999 (two-part send)                    │
+│                    │ 1st: H.264 AVCC frame (35-65 KB, zero-copy)     │
+│                    │ 2nd: 2940 bytes PCM audio (from 0xFE000)        │
+│                    │ zoom delta piggybacked on request                │
+└────────────────────┼──────────────────────────────────────────────────┘
                      │ USB 2.0 High Speed (480 Mbps)
-┌────────────────────┼─────────────────────────────────────────────┐
-│  PC (Windows)      │                                             │
-│                    ▼                                             │
-│  chdk-webcam.exe                                                 │
-│    PTPClient (libusb-1.0) ── receives H.264 AVCC frames         │
-│    H264Decoder (FFmpeg) ──── decodes to YUV420P                  │
-│    FrameProcessor ────────── YUV→RGB24, upscale to 1280x720     │
-│    PreviewWindow ─────────── Win32 GDI preview + zoom control    │
-│    VirtualWebcam ─────────── DirectShow "CHDK Webcam" device     │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────┼──────────────────────────────────────────────────┐
+│  PC (Windows)      │                                                  │
+│                    ▼                                                  │
+│  chdk-webcam.exe                                                      │
+│    PTPClient ─────────── split: video (N-2940 bytes) + audio (2940)   │
+│    H264Decoder ──────── FFmpeg libavcodec ──► YUV420P                 │
+│    FrameProcessor ───── YUV→RGB24, upscale to 1280x720               │
+│    PreviewWindow ────── Win32 GDI preview + zoom control              │
+│    VirtualWebcam ────── DirectShow "CHDK Webcam" device               │
+│    AudioOutput ──────── WASAPI ──► speakers / VB-Audio Virtual Cable  │
+│    AVRecorder ───────── FFmpeg libavformat ──► MKV (video + audio)    │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Camera Side

@@ -8,6 +8,8 @@ Turn a Canon IXUS 870 IS into a USB webcam with audio, streaming H.264 video at 
 
 ## Performance
 
+### Video
+
 | Metric | Value |
 |--------|-------|
 | Resolution | 640x480 native, upscaled to 1280x720 |
@@ -17,63 +19,97 @@ Turn a Canon IXUS 870 IS into a USB webcam with audio, streaming H.264 video at 
 | PTP round-trip | min 6ms, avg 29ms, max 80ms |
 | Heap allocation | 0 bytes (zero-copy from ring buffer to USB) |
 | SD card writes | 0 bytes video (0-byte MOV file auto-cleaned) |
-| Audio | 44100 Hz mono 16-bit PCM from camera microphone |
-| Streaming duration | Unlimited (auto-power-off disabled) |
 | Zoom | Real-time via preview window (+/- keys, mouse wheel), zero artifacts |
+
+### Audio
+
+| Metric | Value |
+|--------|-------|
+| Sample rate | 44100 Hz |
+| Format | Mono 16-bit signed PCM |
+| Source | Camera built-in microphone via WM1400 codec |
+| Hardware path | Mic -> WM1400 -> I2S -> SSIO DMA -> RAM (0x43DE9FA8) |
+| Per-frame payload | 2940 bytes (88200 bytes/sec / 30 fps) |
+| Extra PTP round-trips | 0 (audio piggybacked on video frame response) |
+| A/V sync | Frame-level (+-33ms), no drift |
+| Startup mute | 1.0s (eliminates SSIO DMA initialization cracks) |
+| Output options | WASAPI speakers, VB-Audio Virtual Cable, MKV recording |
+| Virtual microphone | Via VB-Audio Virtual Cable -- works in Zoom, Teams, OBS |
+
+### General
+
+| Metric | Value |
+|--------|-------|
+| Streaming duration | Unlimited (auto-power-off disabled) |
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  CANON IXUS 870 IS (Digic IV, ARM926EJ-S, DryOS)               │
-│                                                                  │
-│  CCD ──► ISP ──► JPCORE H.264 encoder (640x480 @ 30fps)        │
-│  10MP    Image          │                                        │
-│          Signal         ▼                                        │
-│          Proc    Ring buffer (256KB slots, AVCC format)          │
-│                         │                                        │
-│                  spy_ring_write (movie_rec.c)                    │
-│                    │ cache invalidate + AVCC parse               │
-│                    │ dual-slot seqlock at 0xFF000                │
-│                    │ suppresses SD writes (+0x80=0)              │
-│                    ▼                                             │
-│                  capture_frame_h264 (webcam.c)                   │
-│                    │ polls seqlock with msleep(10)               │
-│                    │ zero-copy: passes ring buffer ptr to PTP    │
-│                    ▼                                             │
-│                  PTP opcode 0x9999 (CHDK_GetMJPEGFrame)         │
-│                    │ sends H.264 AVCC frame (35-65 KB)          │
-│                    │ + 2940 bytes PCM audio piggybacked          │
-│                    │ zoom piggybacked on frame request           │
-└────────────────────┼─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  CANON IXUS 870 IS (Digic IV, ARM926EJ-S, DryOS)                    │
+│                                                                      │
+│  VIDEO PATH                          AUDIO PATH                      │
+│  ──────────                          ──────────                      │
+│  CCD ──► ISP ──► JPCORE H.264       Mic ──► WM1400 ──► I2S          │
+│  10MP    Image     (640x480@30fps)              │                    │
+│          Signal         │                       ▼                    │
+│          Proc           ▼              SSIO DMA (0xC0820500)         │
+│               Ring buffer (256KB)               │                    │
+│                         │                       ▼                    │
+│                         │              RAM buffer (0x43DE9FA8)       │
+│                         │              88200 bytes/sec (44.1kHz)     │
+│                         │                       │                    │
+│                  spy_ring_write (movie_rec.c) ◄─┘                    │
+│                    │ cache invalidate + AVCC parse                    │
+│                    │ dual-slot seqlock at 0xFF000                     │
+│                    │ reads 2940 bytes audio/frame to 0xFE000         │
+│                    │ +0x80=2: blocks video writes, keeps audio alive  │
+│                    ▼                                                  │
+│                  PTP opcode 0x9999 (two-part send)                    │
+│                    │ 1st: H.264 AVCC frame (35-65 KB, zero-copy)     │
+│                    │ 2nd: 2940 bytes PCM audio (from 0xFE000)        │
+│                    │ zoom delta piggybacked on request                │
+└────────────────────┼──────────────────────────────────────────────────┘
                      │ USB 2.0 High Speed (480 Mbps)
-┌────────────────────┼─────────────────────────────────────────────┐
-│  PC (Windows)      │                                             │
-│                    ▼                                             │
-│  chdk-webcam.exe                                                 │
-│    PTPClient (libusb-1.0) ── receives H.264 AVCC frames         │
-│    H264Decoder (FFmpeg) ──── decodes to YUV420P                  │
-│    FrameProcessor ────────── YUV→RGB24, upscale to 1280x720     │
-│    PreviewWindow ─────────── Win32 GDI preview + zoom control    │
-│    VirtualWebcam ─────────── DirectShow "CHDK Webcam" device     │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────┼──────────────────────────────────────────────────┐
+│  PC (Windows)      │                                                  │
+│                    ▼                                                  │
+│  chdk-webcam.exe                                                      │
+│    PTPClient ─────────── split: video (N-2940 bytes) + audio (2940)   │
+│    H264Decoder ──────── FFmpeg libavcodec ──► YUV420P                 │
+│    FrameProcessor ───── YUV→RGB24, upscale to 1280x720               │
+│    PreviewWindow ────── Win32 GDI preview + zoom control              │
+│    VirtualWebcam ────── DirectShow "CHDK Webcam" device               │
+│    AudioOutput ──────── WASAPI ──► speakers / VB-Audio Virtual Cable  │
+│    AVRecorder ───────── FFmpeg libavformat ──► MKV (video + audio)    │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 For detailed architecture documentation, see [Architecture](docs/architecture.md).
 
 ## Features
 
-- **30 FPS H.264 streaming** from the camera's native video encoder
-- **44.1 kHz audio** from camera microphone, piggybacked on video frames
-- **Zero-copy frame delivery** -- no on-camera memory allocation or copying
-- **Real-time zoom control** -- 10 positions (28-112mm), zero artifacts during zoom
-- **Record to MKV** -- save video + audio to file with `--record`
-- **DirectShow virtual webcam** -- appears as "CHDK Webcam" in Zoom, Teams, OBS
-- **Preview window** -- real-time video with zoom input via keyboard and mouse wheel
-- **WASAPI audio output** -- play camera mic through PC speakers or virtual audio cable (`--audio-out`)
-- **PTP firmware upload** -- deploy new firmware over USB without removing the SD card
-- **Camera file management** -- `--ls`, `--delete`, `--download`, `--exec` files on camera via PTP
-- **Dual-slot seqlock** -- lock-free producer-consumer protocol for reliable frame delivery
+**Video:**
+- **30 FPS H.264 streaming** from the camera's native JPCORE encoder
+- **Zero-copy frame delivery** -- ring buffer pointer passed directly to USB DMA, 0 bytes heap
+- **Real-time zoom control** -- 10 positions (28-112mm equiv.), async DryOS task, zero artifacts
+- **Dual-slot seqlock** -- lock-free producer-consumer for reliable frame delivery
+
+**Audio:**
+- **44.1 kHz live audio** from camera microphone via SSIO DMA hardware intercept
+- **Zero extra round-trips** -- 2940 bytes PCM piggybacked on each video frame (two-part PTP send)
+- **Virtual microphone** -- VB-Audio Virtual Cable routes camera mic to Zoom/Teams/OBS
+- **WASAPI audio output** -- play camera mic through PC speakers or any audio device
+- **Frame-level A/V sync** -- no drift, audio and video delivered atomically per frame
+
+**Output:**
+- **DirectShow virtual webcam** -- appears as "CHDK Webcam" in all video apps
+- **MKV recording** -- save video + audio to file with `--record` (FFmpeg libavformat)
+- **Preview window** -- real-time 1280x720 video with keyboard/mouse zoom control
+
+**Management:**
+- **PTP firmware upload** -- deploy over USB without removing the SD card
+- **Camera file ops** -- `--ls`, `--delete`, `--download`, `--exec` via CHDK Lua over PTP
 
 ## Pre-built Binaries
 
@@ -131,7 +167,7 @@ Saves H.264 video + PCM audio to a single MKV file. Can be combined with `--audi
 | Document | Description |
 |----------|-------------|
 | [Getting Started](docs/getting-started.md) | Setup, build, deploy, run, and troubleshooting |
-| [Architecture](docs/architecture.md) | System design, PTP protocol, seqlock, H.264 format |
+| [Architecture](docs/architecture.md) | System design, PTP protocol, seqlock, H.264 format, audio capture |
 | [Camera & CHDK Reference](docs/camera-and-chdk.md) | Firmware upgrade, CHDK installation, ALT mode |
 | [Firmware Reverse Engineering](docs/firmware-reverse-engineering.md) | Ghidra project, memory map, ISP architecture |
 | [Development Log](docs/development-log.md) | Full implementation history (v0-v36w) |
