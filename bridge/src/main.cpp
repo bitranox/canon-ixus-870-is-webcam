@@ -43,6 +43,50 @@
 // Global flag for graceful shutdown
 static volatile bool g_running = true;
 
+// Audio WAV writer — accumulates PCM samples during session, writes WAV on exit
+static FILE* g_audio_wav = nullptr;
+static uint32_t g_audio_bytes = 0;
+
+static void audio_wav_open(const char* path) {
+    g_audio_wav = fopen(path, "wb");
+    if (!g_audio_wav) return;
+    // Write WAV header placeholder (44 bytes) — updated on close
+    uint8_t hdr[44] = {0};
+    memcpy(hdr, "RIFF", 4);
+    memcpy(hdr + 8, "WAVEfmt ", 8);
+    uint32_t fmt_size = 16;
+    memcpy(hdr + 16, &fmt_size, 4);
+    uint16_t pcm = 1;           memcpy(hdr + 20, &pcm, 2);        // PCM format
+    uint16_t channels = 1;      memcpy(hdr + 22, &channels, 2);   // mono
+    uint32_t sample_rate = 44100; memcpy(hdr + 24, &sample_rate, 4);
+    uint32_t byte_rate = 88200; memcpy(hdr + 28, &byte_rate, 4);  // 44100*2
+    uint16_t block_align = 2;   memcpy(hdr + 32, &block_align, 2);
+    uint16_t bits = 16;         memcpy(hdr + 34, &bits, 2);
+    memcpy(hdr + 36, "data", 4);
+    fwrite(hdr, 1, 44, g_audio_wav);
+    g_audio_bytes = 0;
+}
+
+static void audio_wav_write(const uint8_t* data, size_t size) {
+    if (!g_audio_wav || !data || size == 0) return;
+    fwrite(data, 1, size, g_audio_wav);
+    g_audio_bytes += (uint32_t)size;
+}
+
+static void audio_wav_close() {
+    if (!g_audio_wav) return;
+    // Update WAV header with final sizes
+    uint32_t riff_size = 36 + g_audio_bytes;
+    fseek(g_audio_wav, 4, SEEK_SET);
+    fwrite(&riff_size, 4, 1, g_audio_wav);
+    fseek(g_audio_wav, 40, SEEK_SET);
+    fwrite(&g_audio_bytes, 4, 1, g_audio_wav);
+    fclose(g_audio_wav);
+    g_audio_wav = nullptr;
+    fprintf(stderr, "Audio saved: %u bytes (%.1f seconds)\n",
+            g_audio_bytes, g_audio_bytes / 88200.0);
+}
+
 static void signal_handler(int) {
     g_running = false;
 }
@@ -441,6 +485,9 @@ int main(int argc, char* argv[]) {
     else
         printf("\nStreaming. Press Ctrl+C to stop.\n\n");
 
+    // Open audio WAV file for recording
+    audio_wav_open("audio_capture.wav");
+
     // --- Main streaming loop ---
     auto start_time = std::chrono::steady_clock::now();
     auto stats_interval = std::chrono::seconds(2);
@@ -593,6 +640,11 @@ int main(int argc, char* argv[]) {
                 fwrite(mjpeg.data.data(), 1, mjpeg.data.size(), f);
                 fclose(f);
             }
+        }
+
+        // Write piggybacked audio to WAV file
+        if (!mjpeg.audio_data.empty()) {
+            audio_wav_write(mjpeg.audio_data.data(), mjpeg.audio_data.size());
         }
 
         // Handle debug frames — not video, just diagnostic data
@@ -1238,6 +1290,7 @@ int main(int argc, char* argv[]) {
     }
 
     printf("\nStopping...\n");
+    audio_wav_close();
     if (g_debug_log) { fclose(g_debug_log); g_debug_log = nullptr; }
     preview.shutdown();
     client.stop_webcam();
