@@ -1025,14 +1025,43 @@ static int handle_ptp(
                 int gf_rc = libwebcam->get_frame(&frame);
                 libwebcam->get_status(&wc_status);
                 if (gf_rc == 0 && frame.data && frame.size > 0) {
+                    // Send video (zero-copy from ring buffer) + audio (from shared mem)
+                    // as one PTP data phase with total_size = video + 2940.
+                    volatile unsigned int *ashm = (volatile unsigned int *)0x000FE000;
+                    unsigned int audio_avail = ashm[3];
+                    unsigned int total = frame.size + 2940;
+
                     ptp.num_param = 4;
-                    ptp.param1 = frame.size;
+                    ptp.param1 = total;
                     ptp.param2 = frame.width;
                     ptp.param3 = frame.height;
-                    // Encode format in high byte, frame_num in low 24 bits
                     ptp.param4 = ((unsigned)frame.format << 24) | (frame.frame_num & 0x00FFFFFF);
-                    if (!send_ptp_data_buffered(data, memcpy, (const char *)frame.data, frame.size)) {
+
+                    // First send: video data (total_size=total for PTP header)
+                    if (data->send_data(data->handle,
+                            (const char *)frame.data, frame.size, total, 0, 0, 0)) {
                         ptp.code = PTP_RC_GeneralError;
+                    }
+                    // Second send: audio data (total_size=0 = continuation)
+                    else {
+                        static char audio_buf[2940];
+                        if (audio_avail > 0 && audio_avail <= 2940) {
+                            memcpy(audio_buf, (const char *)(0x000FE000 + 16), audio_avail);
+                            if (audio_avail < 2940)
+                                memcpy(audio_buf + audio_avail, audio_buf, 0); // nop
+                            // zero-fill remainder
+                            unsigned int zi;
+                            for (zi = audio_avail; zi < 2940; zi++)
+                                audio_buf[zi] = 0;
+                        } else {
+                            unsigned int zi;
+                            for (zi = 0; zi < 2940; zi++)
+                                audio_buf[zi] = 0;
+                        }
+                        if (data->send_data(data->handle,
+                                audio_buf, 2940, 0, 0, 0, 0)) {
+                            ptp.code = PTP_RC_GeneralError;
+                        }
                     }
                 } else {
                     ptp.num_param = 4;

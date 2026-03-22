@@ -202,51 +202,14 @@ static int capture_frame_h264(void)
                         copy_sz = total;
                     }
 
-                    // Copy video to frame_data_buf, then append audio.
-                    // This breaks zero-copy but enables audio piggybacking.
-                    // memcpy cost: ~1ms for 40KB frame (negligible vs 29ms PTP RTT).
-                    {
-                        unsigned int total = copy_sz;
-                        unsigned int i;
-
-                        // Copy video
-                        if (copy_sz > FRAME_BUF_SIZE - 4096)
-                            copy_sz = FRAME_BUF_SIZE - 4096; // leave room for audio
-                        for (i = 0; i < copy_sz; i++)
-                            frame_data_buf[i] = src[i];
-
-                        // ALWAYS append exactly 2940 bytes of audio.
-                        // Before msg 8 fires (~1s), this is silence (zeros).
-                        // After msg 8, this is real PCM from the microphone.
-                        // Bridge always strips last 2940 bytes as audio.
-                        {
-                            volatile unsigned int *ashm = (volatile unsigned int *)0x000FE000;
-                            unsigned int audio_avail = ashm[3];
-
-                            if (copy_sz + 2940 <= FRAME_BUF_SIZE) {
-                                if (audio_avail > 0 && audio_avail <= 2940) {
-                                    volatile unsigned char *asrc =
-                                        (volatile unsigned char *)(0x000FE000 + 16);
-                                    for (i = 0; i < audio_avail; i++)
-                                        frame_data_buf[copy_sz + i] = asrc[i];
-                                    // Zero-pad if less than 2940
-                                    for (; i < 2940; i++)
-                                        frame_data_buf[copy_sz + i] = 0;
-                                } else {
-                                    // No audio yet — append silence
-                                    for (i = 0; i < 2940; i++)
-                                        frame_data_buf[copy_sz + i] = 0;
-                                }
-                                copy_sz += 2940;
-                            }
-                        }
-                    }
+                    // Zero-copy: pass ring buffer pointer directly to PTP.
+                    // No memcpy needed — seqlock guarantees frame is complete.
                 }
 
                 if (s == hdr + 1) last_seq_a = seq_a;
                 else last_seq_b = seq_b;
 
-                hw_jpeg_data = frame_data_buf;
+                hw_jpeg_data = src;
                 hw_jpeg_size = copy_sz;
                 frame_width = 640;
                 frame_height = 480;
@@ -406,6 +369,9 @@ static int webcam_stop(void)
 {
     webcam_active = 0;
 
+    // Re-enable auto-power-off (disabled in webcam_start)
+    enable_shutdown();
+
     // Disable spy buffer first — movie_rec.c's spy_ring_write returns
     // early when magic is cleared, preventing writes during shutdown.
     {
@@ -418,10 +384,9 @@ static int webcam_stop(void)
     if (recording_active) {
         int stop_retries;
 
-        // Restore normal recording state before stopping.
-        // +0x80=1 lets StopMovieRecord finalize properly (no beeping/errors).
-        volatile unsigned int *ring = (volatile unsigned int *)0x8968;
-        ring[0x80/4] = 1;
+        // Restore +0x80=1 before stopping (was 2 for audio path).
+        // Prevents beeping/errors during finalization.
+        *(volatile unsigned int *)0x89E8 = 1;
 
         call_func_ptr(FW_UIFS_StopMovieRecord, 0, 0);
 
@@ -430,8 +395,6 @@ static int webcam_stop(void)
             if (get_movie_status() != VIDEO_RECORD_IN_PROGRESS) break;
         }
         recording_active = 0;
-
-        // MOV file deletion handled by bridge via PTP Lua after stop.
     }
 
     frame_count = 0;
@@ -443,7 +406,6 @@ static int webcam_stop(void)
         webcam_mode_switched = 0;
     }
 
-    enable_shutdown();
     return 0;
 }
 
