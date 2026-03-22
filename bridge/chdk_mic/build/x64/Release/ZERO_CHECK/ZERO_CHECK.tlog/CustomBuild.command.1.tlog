@@ -1,0 +1,10 @@
+^C:\PROJECTS\IXUS870IS\BRIDGE\CHDK_MIC\BUILD\CMAKEFILES\B3E76E48AF5CDE6836913E2CF29832D1\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SC:/projects/ixus870IS/bridge/chdk_mic -BC:/projects/ixus870IS/bridge/chdk_mic/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/projects/ixus870IS/bridge/chdk_mic/build/chdk_mic.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

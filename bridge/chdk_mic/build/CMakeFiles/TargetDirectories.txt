@@ -1,0 +1,3 @@
+C:/projects/ixus870IS/bridge/chdk_mic/build/CMakeFiles/chdk_mic.dir
+C:/projects/ixus870IS/bridge/chdk_mic/build/CMakeFiles/ALL_BUILD.dir
+C:/projects/ixus870IS/bridge/chdk_mic/build/CMakeFiles/ZERO_CHECK.dir
