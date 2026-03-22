@@ -1,0 +1,499 @@
+========================================================================
+AudioIC WM1400 Hardware Layer — Decompiled Functions
+Firmware: IXUS 870 IS / SD 880 IS, version 1.01a
+Purpose: Find live PCM DMA buffer address during movie recording
+========================================================================
+
+--- Key ROM Data Values ---
+  0xFF846854 (AudioTsk state struct) = 0x000023C0
+  0xFF846850 (AudioIC init param) = 0x00002710
+  0xFF846838 (AudioIC string addr) = 0x000001E1
+  0xFF846858 (AudioTsk config1) = 0x000006EC
+  0xFF84685C (AudioTsk config2) = 0x00001408
+  0xFF84C2A0 (AudioIC hw state) = 0x0000276C
+
+========================================================================
+Function 1/15: FUN_ff847334 — AudioTsk HW config (called 3x)
+Address: 0xFF847334
+========================================================================
+Ghidra name: FUN_ff847334
+Size: 52 bytes
+
+
+undefined8 FUN_ff847334(undefined4 param_1)
+
+{
+  undefined4 uVar1;
+  undefined4 uVar2;
+  undefined4 uStack_c;
+  
+  uVar1 = 0;
+  uVar2 = DAT_ff847404;
+  uStack_c = param_1;
+  FUN_ff842d04(*(undefined4 *)(DAT_ff846854 + 0x38),&uStack_c,0x10,DAT_ff847408,0,DAT_ff847404,0);
+  return CONCAT44(uVar2,uVar1);
+}
+
+
+
+========================================================================
+Function 2/15: task_AudioTsk — main audio task (re-decompile)
+Address: 0xFF8465CC
+========================================================================
+Ghidra name: FUN_ff8465cc
+Size: 76 bytes
+
+
+undefined4 FUN_ff8465cc(void)
+
+{
+  int *piVar1;
+  int iVar2;
+  int iVar3;
+  char cVar4;
+  byte in_Q;
+  
+  iVar2 = DAT_ff846854;
+  FUN_ff827994(*(undefined4 *)(DAT_ff846854 + 0x34),DAT_ff846850,s_AudioIC_WM1400_c_ff84683c,
+               DAT_ff846838);
+  FUN_ff847334(DAT_ff846858);
+  FUN_ff847334(DAT_ff84685c);
+  FUN_ff847334(0x5f00);
+  *(undefined4 *)(iVar2 + 4) = 1;
+  FUN_ff827584(*(undefined4 *)(iVar2 + 0x2c));
+  if (0 < *(int *)*DAT_ff81b11c) {
+    switchD_ff8443f8::default(s_KerTask_c_ff81b120,DAT_ff81b1c8);
+  }
+  if (0 < *DAT_ff81b130) {
+    switchD_ff8443f8::default(s_KerTask_c_ff81b120,0x21c);
+  }
+  piVar1 = DAT_ff8121b4;
+  if (*DAT_ff8121ac == 0) {
+    *(char *)(*DAT_ff8121b4 + 0x4b) = *(char *)(*DAT_ff8121b4 + 0x4b) + '\x01';
+    iVar2 = FUN_ff815778(0xffffffff);
+    cVar4 = '\0';
+    if (iVar2 != 0) {
+      FUN_ff8157ec();
+      iVar3 = *piVar1;
+      iVar2 = (*(byte *)(iVar3 + 0x4b) - 1) * 0x1000000;
+      *(char *)(iVar3 + 0x4b) = (char)((uint)iVar2 >> 0x18);
+      if (iVar2 >> 0x18 == 0) {
+        FUN_ff811970((uint)(byte)(cVar4 << 1 | 8U | in_Q) << 0x1b | 0x80);
+      }
+      return 0;
+    }
+    iVar3 = *piVar1;
+    iVar2 = (*(byte *)(iVar3 + 0x4b) - 1) * 0x1000000;
+    *(char *)(iVar3 + 0x4b) = (char)((uint)iVar2 >> 0x18);
+    if (iVar2 >> 0x18 == 0) {
+      FUN_ff811970((uint)(in_Q | 8) << 0x1b | 0x80);
+    }
+  }
+  return 0xffffffff;
+}
+
+
+
+========================================================================
+Function 3/15: FUN_ff846624 — AudioIC vicinity (init?)
+Address: 0xFF846624
+========================================================================
+Ghidra name: FUN_ff846624
+Size: 24 bytes
+
+
+void FUN_ff846624(void)
+
+{
+  int iVar1;
+  
+  iVar1 = DAT_ff846854;
+  FUN_ff827584(*(undefined4 *)(DAT_ff846854 + 0x30));
+  *(undefined4 *)(iVar1 + 0x18) = 0;
+  return;
+}
+
+
+
+========================================================================
+Function 4/15: FUN_ff846764 — AudioIC vicinity (DMA?)
+Address: 0xFF846764
+========================================================================
+Ghidra name: FUN_ff846764
+Size: 208 bytes
+
+
+void FUN_ff846764(int param_1)
+
+{
+  int unaff_r4;
+  
+  if (param_1 == 0x17 || param_1 == 5) {
+    switchD_ff8443f8::default(s_AudioIC_WM1400_c_ff84683c,DAT_ff846890);
+  }
+  FUN_ff847334(DAT_ff846894);
+  FUN_ff847334(DAT_ff846898);
+  FUN_ff847334(DAT_ff84689c);
+  FUN_ff847334(DAT_ff8468a0);
+  FUN_ff847334(DAT_ff8468a4);
+  FUN_ff847334(DAT_ff8468a8);
+  FUN_ff847334(*(ushort *)(unaff_r4 + 2) | 0x6c00);
+  FUN_ff847334(DAT_ff8468ac);
+  FUN_ff847334(DAT_ff8468b0);
+  FUN_ff847334(DAT_ff8468b4);
+  FUN_ff847334(0x5a00);
+  FUN_ff847334(DAT_ff8468b8);
+  FUN_ff847334(DAT_ff8468bc);
+  FUN_ff847334(DAT_ff8468c0);
+  FUN_ff847334(DAT_ff8468c4);
+  FUN_ff847334(DAT_ff8468c8);
+  FUN_ff847334(DAT_ff8468cc);
+  FUN_ff847334(*(ushort *)(DAT_ff8468d0 + 0x82) | 0x4600);
+  FUN_ff8278ac(s_AudioTsk_ff8468d4,0x19,0,FUN_ff8465cc);
+  return;
+}
+
+
+
+========================================================================
+Function 5/15: FUN_ff8467a8 — AudioIC vicinity (cleanup?)
+Address: 0xFF8467A8
+========================================================================
+Ghidra name: FUN_ff8467a8
+Size: 140 bytes
+
+
+void FUN_ff8467a8(void)
+
+{
+  int unaff_r4;
+  
+  FUN_ff847334(*(ushort *)(unaff_r4 + 2) | 0x6c00);
+  FUN_ff847334(DAT_ff8468ac);
+  FUN_ff847334(DAT_ff8468b0);
+  FUN_ff847334(DAT_ff8468b4);
+  FUN_ff847334(0x5a00);
+  FUN_ff847334(DAT_ff8468b8);
+  FUN_ff847334(DAT_ff8468bc);
+  FUN_ff847334(DAT_ff8468c0);
+  FUN_ff847334(DAT_ff8468c4);
+  FUN_ff847334(DAT_ff8468c8);
+  FUN_ff847334(DAT_ff8468cc);
+  FUN_ff847334(*(ushort *)(DAT_ff8468d0 + 0x82) | 0x4600);
+  FUN_ff8278ac(s_AudioTsk_ff8468d4,0x19,0,FUN_ff8465cc);
+  return;
+}
+
+
+
+========================================================================
+Function 6/15: FUN_ff84c170 — resource lookup (StartSoundRecord)
+Address: 0xFF84C170
+========================================================================
+Ghidra name: FUN_ff84c170
+Size: 40 bytes
+
+
+undefined4 FUN_ff84c170(undefined4 param_1,undefined4 param_2,undefined4 param_3,undefined4 param_4)
+
+{
+  uint uVar1;
+  undefined4 local_8 [2];
+  
+  local_8[0] = param_4;
+  uVar1 = FUN_ff86d6a0(*(undefined4 *)(DAT_ff84c2a0 + 8),param_1,local_8);
+  if ((uVar1 & 1) != 0) {
+    local_8[0] = 0;
+  }
+  return local_8[0];
+}
+
+
+
+========================================================================
+Function 7/15: FUN_ff84c144 — resource register (StartSoundRecord)
+Address: 0xFF84C144
+========================================================================
+Ghidra name: FUN_ff84c144
+Size: 44 bytes
+
+
+bool FUN_ff84c144(undefined4 param_1,undefined4 param_2)
+
+{
+  int iVar1;
+  
+  iVar1 = FUN_ff86d4dc(*(undefined4 *)(DAT_ff84c2a0 + 8),param_1,param_2);
+  return iVar1 == 0 || iVar1 == 0x13;
+}
+
+
+
+========================================================================
+Function 8/15: FUN_ff84c118 — resource release (StartSoundRecord)
+Address: 0xFF84C118
+========================================================================
+Ghidra name: FUN_ff84c118
+Size: 44 bytes
+
+
+undefined4 FUN_ff84c118(int *param_1)
+
+{
+  int iVar1;
+  int *piVar2;
+  int *piVar3;
+  int iVar4;
+  int *piVar5;
+  uint in_cpsr;
+  
+  if ((-1 < param_1[2]) && (*param_1 != 0)) {
+    thunk_FUN_ff813a7c();
+  }
+  iVar1 = DAT_ff813b4c;
+  if (param_1 == (int *)0x0) {
+    return 0;
+  }
+  piVar5 = param_1 + -2;
+  FUN_ff812374(*(undefined4 *)(DAT_ff813b4c + 0x14),0);
+  *(int *)(iVar1 + 0x20) = *(int *)(iVar1 + 0x20) - param_1[-1];
+  *(int *)(iVar1 + 0x28) = *(int *)(iVar1 + 0x28) + -1;
+  piVar2 = (int *)(iVar1 + 8);
+  piVar3 = *(int **)(iVar1 + 0x10);
+  do {
+    if (piVar3 == (int *)0x0) {
+      iVar4 = piVar2[2];
+LAB_ff813af8:
+      *param_1 = iVar4;
+LAB_ff813afc:
+      piVar2[2] = (int)piVar5;
+      if ((int *)((int)piVar2 + piVar2[1] + 8) == piVar5) {
+        piVar2[1] = piVar2[1] + param_1[-1] + 8;
+        piVar2[2] = *param_1;
+      }
+      in_cpsr = in_cpsr & 0xffffff00;
+      iVar1 = FUN_ff815d1c(*(undefined4 *)(iVar1 + 0x14));
+      if (iVar1 != 0 || (in_cpsr >> 0x1e & 1) == 0) {
+        FUN_ff815ed8(iVar1);
+        return 0;
+      }
+      return 0xffffffff;
+    }
+    if (piVar5 < piVar3) {
+      *param_1 = (int)piVar3;
+      if ((int *)((int)piVar5 + param_1[-1] + 8) != piVar3) goto LAB_ff813afc;
+      param_1[-1] = param_1[-1] + piVar3[1] + 8;
+      iVar4 = piVar3[2];
+      goto LAB_ff813af8;
+    }
+    piVar2 = piVar3;
+    piVar3 = (int *)piVar3[2];
+  } while( true );
+}
+
+
+
+========================================================================
+Function 9/15: FUN_ff846200 — AudioIC area
+Address: 0xFF846200
+========================================================================
+Ghidra name: FUN_ff846200
+Size: 8 bytes
+
+
+uint FUN_ff846200(uint param_1)
+
+{
+  return param_1 & 1;
+}
+
+
+
+========================================================================
+Function 10/15: FUN_ff846300 — AudioIC area
+Address: 0xFF846300
+========================================================================
+[NO FUNCTION AT THIS ADDRESS]
+
+========================================================================
+Function 11/15: FUN_ff846400 — AudioIC area
+Address: 0xFF846400
+========================================================================
+Ghidra name: FUN_ff846400
+Size: 52 bytes
+
+
+void FUN_ff846400(void)
+
+{
+  int iVar1;
+  undefined4 uVar2;
+  uint uVar3;
+  int iVar4;
+  uint unaff_r4;
+  uint unaff_r5;
+  undefined2 *unaff_r6;
+  int unaff_r7;
+  int unaff_r8;
+  undefined4 unaff_r9;
+  undefined4 unaff_r10;
+  
+code_r0xff846400:
+  do {
+    FUN_ff878ba0();
+    do {
+      uVar2 = *(undefined4 *)(unaff_r8 + unaff_r4 * 4);
+      *(undefined4 *)(unaff_r6 + 0xe) = uVar2;
+      FUN_ff878ae8(uVar2,unaff_r5);
+      do {
+        unaff_r6[1] = *unaff_r6;
+        do {
+          *(undefined4 *)(unaff_r7 + 0x100) = unaff_r10;
+          *(undefined4 *)(unaff_r7 + 0x108) = unaff_r9;
+          if (*(int *)(unaff_r6 + 8) != 0) {
+            FUN_ff8277ec();
+          }
+          FUN_ff827994(*(undefined4 *)(unaff_r6 + 6),0,s_JogDial_c_ff846590,DAT_ff84658c);
+          FUN_ff8277ec(0x28);
+          iVar1 = *(int *)(unaff_r7 + 0x104) >> 0x10;
+          *unaff_r6 = (short)((uint)*(int *)(unaff_r7 + 0x104) >> 0x10);
+          iVar4 = (int)(short)unaff_r6[1];
+          uVar3 = iVar1 - iVar4;
+        } while (uVar3 == 0);
+        unaff_r5 = uVar3;
+        if ((int)uVar3 < 0) {
+          unaff_r5 = -uVar3;
+        }
+        unaff_r4 = (uint)(0 < (int)uVar3);
+        if (0xff < unaff_r5) {
+          if ((int)uVar3 < 1) {
+            iVar1 = (0x7fff - iVar4) + iVar1;
+          }
+          else {
+            iVar1 = (0x7fff - iVar1) + iVar4;
+          }
+          unaff_r5 = iVar1 + 0x8001;
+          unaff_r4 = unaff_r4 ^ 1;
+        }
+      } while (*(int *)(unaff_r6 + 10) == 0);
+      if (*(int *)(unaff_r6 + 0xe) == 0) goto code_r0xff846400;
+    } while (*(int *)(unaff_r8 + unaff_r4 * 4) == *(int *)(unaff_r6 + 0xe));
+    FUN_ff878ba0(DAT_ff84659c);
+  } while( true );
+}
+
+
+
+========================================================================
+Function 12/15: FUN_ff846500 — AudioIC area
+Address: 0xFF846500
+========================================================================
+Ghidra name: FUN_ff846500
+Size: 124 bytes
+
+
+void FUN_ff846500(void)
+
+{
+  int iVar1;
+  undefined4 uVar2;
+  uint uVar3;
+  undefined4 unaff_r4;
+  undefined2 *unaff_r5;
+  
+  *(undefined4 *)(unaff_r5 + 8) = unaff_r4;
+  *unaff_r5 = (short)unaff_r4;
+  unaff_r5[1] = (short)unaff_r4;
+  *(undefined4 *)(unaff_r5 + 10) = unaff_r4;
+  *(undefined4 *)(unaff_r5 + 0xc) = unaff_r4;
+  *(undefined4 *)(unaff_r5 + 0xe) = unaff_r4;
+  uVar2 = FUN_ff827928(0,0);
+  *(undefined4 *)(unaff_r5 + 6) = uVar2;
+  iVar1 = DAT_ff84657c;
+  *(undefined4 *)(DAT_ff84657c + 0x104) = 2;
+  *(undefined4 *)(iVar1 + 0x114) = unaff_r4;
+  *(undefined4 *)(iVar1 + 0x110) = unaff_r4;
+  *(undefined4 *)(iVar1 + 0x108) = unaff_r4;
+  *(undefined4 *)(iVar1 + 0x104) = 1;
+  *(undefined4 *)(iVar1 + 0x100) = unaff_r4;
+  *(undefined4 *)(iVar1 + 0x108) = 1;
+  uVar3 = FUN_ff81ae8c(0,0xe,&LAB_ff846304,0);
+  if ((uVar3 & 1) != 0) {
+    switchD_ff8443f8::default(s_JogDial_c_ff846590,DAT_ff8465a8);
+  }
+  *(undefined4 *)(unaff_r5 + 2) = 1;
+  return;
+}
+
+
+
+========================================================================
+Function 13/15: FUN_ff8c3f9c — MJPEG/audio state (msg 4)
+Address: 0xFF8C3F9C
+========================================================================
+Ghidra name: FUN_ff8c3f9c
+Size: 24 bytes
+
+
+void FUN_ff8c3f9c(void)
+
+{
+  int iVar1;
+  
+  iVar1 = DAT_ff8c43f4;
+  *(undefined4 *)(DAT_ff8c43f4 + 0x38) = 1;
+  *(undefined4 *)(iVar1 + 0x3c) = 0;
+  return;
+}
+
+
+
+========================================================================
+Function 14/15: FUN_ff8c4064 — audio callback (msg 4)
+Address: 0xFF8C4064
+========================================================================
+Ghidra name: FUN_ff8c4064
+Size: 12 bytes
+
+
+void FUN_ff8c4064(undefined4 param_1)
+
+{
+  *(undefined4 *)(DAT_ff8c43f4 + 0x80) = param_1;
+  return;
+}
+
+
+
+========================================================================
+Function 15/15: FUN_ff8c4070 — audio cleanup (msg 4)
+Address: 0xFF8C4070
+========================================================================
+Ghidra name: FUN_ff8c4070
+Size: 16 bytes
+
+
+void FUN_ff8c4070(void)
+
+{
+  *(undefined4 *)(DAT_ff8c43f4 + 0x80) = 0;
+  return;
+}
+
+
+
+
+========================================================================
+AudioIC I/O Register Scan (0xFF846000-0xFF847400)
+========================================================================
+
+  0xFF84620C: 0xC02200F8  (I/O register)
+  0xFF846210: 0xC02200FC  (I/O register)
+  0xFF846214: 0xC022301C  (I/O register)
+  0xFF846218: 0xC0223024  (I/O register)
+  0xFF846220: 0xC0000700  (I/O register)
+  0xFF8462EC: 0xC0220000  (I/O register)
+  0xFF846300: 0xC0223000  (I/O register)
+  0xFF8463C0: 0xC0800002  (I/O register)
+  0xFF84657C: 0xC0240000  (I/O register)
+  0xFF846834: 0xC0220000  (I/O register)

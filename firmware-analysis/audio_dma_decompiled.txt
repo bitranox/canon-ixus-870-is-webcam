@@ -1,0 +1,536 @@
+========================================================================
+Audio DMA Configuration — Decompiled Functions
+Firmware: IXUS 870 IS / SD 880 IS, version 1.01a
+========================================================================
+
+--- ROM Data Values near audio command processor ---
+
+--- FUN_ff847334 parameter ROM values ---
+  0xFF847404 = 0xFF8465AC (-8100436)
+  0xFF847408 = 0xFF8465BC (-8100420)
+  0xFF846894 = 0x00000808 (2056)
+  0xFF846898 = 0x00000E08 (3592)
+  0xFF84689C = 0x00001004 (4100)
+  0xFF8468A0 = 0x00006202 (25090)
+  0xFF8468A4 = 0x00001448 (5192)
+  0xFF8468A8 = 0x000016FF (5887)
+  0xFF8468AC = 0x00007040 (28736)
+  0xFF8468B0 = 0x0000027F (639)
+  0xFF8468B4 = 0x00006420 (25632)
+  0xFF8468B8 = 0x00001D88 (7560)
+  0xFF8468BC = 0x00001EFF (7935)
+  0xFF8468C0 = 0x00000414 (1044)
+  0xFF8468C4 = 0x0000421E (16926)
+  0xFF8468C8 = 0x00004432 (17458)
+  0xFF8468CC = 0x0000242C (9260)
+  0xFF8468D0 = 0x000023FC (9212)
+
+========================================================================
+Function 1/10: FUN_ff842d04 — audio command processor (core)
+Address: 0xFF842D04
+========================================================================
+Ghidra name: FUN_ff842d04
+Size: 84 bytes
+
+
+undefined4
+FUN_ff842d04(int param_1,undefined4 param_2,undefined4 param_3,undefined4 param_4,undefined4 param_5
+            ,undefined4 param_6,undefined4 param_7)
+
+{
+  int iVar1;
+  uint uVar2;
+  uint uVar3;
+  undefined4 unaff_r4;
+  undefined4 in_lr;
+  
+  FUN_ff827994(*(undefined4 *)(param_1 + 4),DAT_ff842b74,s_SioDrv_c_ff842b78,DAT_ff84328c,param_2,
+               param_3,param_4);
+  FUN_ff842cb0(param_1,param_2,param_3,param_4,param_5);
+  uVar2 = *(uint *)(param_1 + 4);
+  uVar3 = (uVar2 & 1) - 1;
+  if ((uVar3 & uVar2) != 0) {
+    iVar1 = FUN_ff812340(uVar2 >> 1,uVar3,param_6,param_7,unaff_r4,in_lr);
+    if (iVar1 == -1) {
+      switchD_ff8443f8::default(s_KerSem_c_ff827564,DAT_ff827620);
+    }
+    return 0;
+  }
+  return 7;
+}
+
+
+
+========================================================================
+Function 2/10: FUN_ff843000 — audio area
+Address: 0xFF843000
+========================================================================
+Ghidra name: FUN_ff843000
+Size: 640 bytes
+
+
+void FUN_ff843000(int *param_1,ushort *param_2,undefined4 param_3,code *param_4,undefined4 param_5,
+                 undefined4 param_6,uint param_7)
+
+{
+  int iVar1;
+  int iVar2;
+  int iVar3;
+  uint *puVar4;
+  uint uVar5;
+  uint uVar6;
+  int iVar7;
+  int iVar8;
+  uint uVar9;
+  uint unaff_r10;
+  uint uVar10;
+  undefined4 in_stack_00000034;
+  code *UNRECOVERED_JUMPTABLE;
+  undefined4 in_stack_0000003c;
+  
+  iVar2 = DAT_ff842b8c;
+  iVar3 = param_1[2];
+  iVar7 = *param_1;
+  iVar1 = iVar3 << 0xf;
+  if (iVar3 << 0xd < 0) {
+    thunk_FUN_ff81056c();
+    puVar4 = *(uint **)(iVar2 + iVar7 * 0x18 + 8);
+    uVar5 = *puVar4 & 0xfffffff0 | 6;
+  }
+  else {
+    thunk_FUN_ff81056c();
+    puVar4 = *(uint **)(iVar2 + iVar7 * 0x18 + 8);
+    uVar5 = *puVar4 & 0xfffffff0 | 4;
+  }
+  *puVar4 = uVar5;
+  thunk_FUN_ff810580();
+  if (iVar3 << 0xc < 0) {
+    thunk_FUN_ff81056c();
+    puVar4 = *(uint **)(iVar2 + iVar7 * 0x18);
+    uVar5 = *puVar4 & 0xfffffff0 | 6;
+  }
+  else {
+    thunk_FUN_ff81056c();
+    puVar4 = *(uint **)(iVar2 + iVar7 * 0x18);
+    uVar5 = *puVar4 & 0xfffffff0 | 4;
+  }
+  *puVar4 = uVar5;
+  thunk_FUN_ff810580();
+  if (-1 < iVar1) {
+    unaff_r10 = (1 << (param_7 - 1 & 0xff)) << 0x10;
+  }
+  uVar5 = (uint)*param_2;
+  if (-1 < iVar1) {
+    uVar10 = unaff_r10 >> 0x10;
+  }
+  else {
+    uVar10 = 1;
+  }
+  (*param_4)(in_stack_00000034);
+  iVar8 = iVar2 + iVar7 * 0x18;
+  for (uVar9 = 0; uVar9 < param_7; uVar9 = uVar9 + 1) {
+    if (iVar3 << 0xe < 0) {
+      thunk_FUN_ff81056c();
+      puVar4 = *(uint **)(iVar2 + iVar7 * 0x18);
+      uVar6 = *puVar4 & 0xfffffff0 | 4;
+    }
+    else {
+      thunk_FUN_ff81056c();
+      puVar4 = *(uint **)(iVar2 + iVar7 * 0x18);
+      uVar6 = *puVar4 & 0xfffffff0 | 6;
+    }
+    *puVar4 = uVar6;
+    thunk_FUN_ff810580();
+    if ((uVar5 & uVar10) == 0) {
+      thunk_FUN_ff81056c();
+      puVar4 = *(uint **)(iVar8 + 8);
+      uVar6 = *puVar4 & 0xfffffff0 | 4;
+    }
+    else {
+      thunk_FUN_ff81056c();
+      puVar4 = *(uint **)(iVar8 + 8);
+      uVar6 = *puVar4 & 0xfffffff0 | 6;
+    }
+    *puVar4 = uVar6;
+    thunk_FUN_ff810580();
+    if (iVar1 < 0) {
+      uVar5 = uVar5 >> 1;
+    }
+    else {
+      uVar5 = (uVar5 & 0x7fff7fff) << 1;
+    }
+    if (iVar3 << 0xe < 0) {
+      thunk_FUN_ff81056c();
+      puVar4 = *(uint **)(iVar2 + iVar7 * 0x18);
+      uVar6 = *puVar4 & 0xfffffff0 | 6;
+    }
+    else {
+      thunk_FUN_ff81056c();
+      puVar4 = *(uint **)(iVar2 + iVar7 * 0x18);
+      uVar6 = *puVar4 & 0xfffffff0 | 4;
+    }
+    *puVar4 = uVar6;
+    thunk_FUN_ff810580();
+  }
+  if (iVar3 << 0xd < 0) {
+    thunk_FUN_ff81056c();
+    puVar4 = *(uint **)(iVar8 + 8);
+    uVar5 = *puVar4 & 0xfffffff0 | 6;
+  }
+  else {
+    thunk_FUN_ff81056c();
+    puVar4 = *(uint **)(iVar8 + 8);
+    uVar5 = *puVar4 & 0xfffffff0 | 4;
+  }
+  *puVar4 = uVar5;
+  thunk_FUN_ff810580();
+  if (iVar3 << 0xc < 0) {
+    thunk_FUN_ff81056c();
+    puVar4 = *(uint **)(iVar2 + iVar7 * 0x18);
+    uVar5 = *puVar4 & 0xfffffff0 | 6;
+  }
+  else {
+    thunk_FUN_ff81056c();
+    puVar4 = *(uint **)(iVar2 + iVar7 * 0x18);
+    uVar5 = *puVar4 & 0xfffffff0 | 4;
+  }
+  *puVar4 = uVar5;
+  thunk_FUN_ff810580();
+                    /* WARNING: Could not recover jumptable at 0xff84327c. Too many branches */
+                    /* WARNING: Treating indirect jump as call */
+  (*UNRECOVERED_JUMPTABLE)(in_stack_0000003c);
+  return;
+}
+
+
+
+========================================================================
+Function 3/10: FUN_ff843100 — audio area
+Address: 0xFF843100
+========================================================================
+Ghidra name: FUN_ff843100
+Size: 384 bytes
+
+
+void FUN_ff843100(void)
+
+{
+  uint *puVar1;
+  uint uVar2;
+  int unaff_r4;
+  uint unaff_r5;
+  code *unaff_r6;
+  int iVar3;
+  uint uVar4;
+  int unaff_r8;
+  int unaff_r9;
+  uint unaff_r10;
+  int unaff_r11;
+  bool in_ZR;
+  int in_stack_00000004;
+  int in_stack_00000008;
+  uint in_stack_00000014;
+  code *UNRECOVERED_JUMPTABLE;
+  undefined4 in_stack_00000048;
+  
+  if (!in_ZR) {
+    unaff_r10 = 1;
+  }
+  (*unaff_r6)();
+  iVar3 = unaff_r8 + unaff_r4 * 0x18;
+  for (uVar4 = 0; uVar4 < in_stack_00000014; uVar4 = uVar4 + 1) {
+    if (unaff_r9 == 0) {
+      thunk_FUN_ff81056c();
+      puVar1 = *(uint **)(unaff_r8 + unaff_r4 * 0x18);
+      uVar2 = *puVar1 & 0xfffffff0 | 6;
+    }
+    else {
+      thunk_FUN_ff81056c();
+      puVar1 = *(uint **)(unaff_r8 + unaff_r4 * 0x18);
+      uVar2 = *puVar1 & 0xfffffff0 | 4;
+    }
+    *puVar1 = uVar2;
+    thunk_FUN_ff810580();
+    if ((unaff_r5 & unaff_r10) == 0) {
+      thunk_FUN_ff81056c();
+      puVar1 = *(uint **)(iVar3 + 8);
+      uVar2 = *puVar1 & 0xfffffff0 | 4;
+    }
+    else {
+      thunk_FUN_ff81056c();
+      puVar1 = *(uint **)(iVar3 + 8);
+      uVar2 = *puVar1 & 0xfffffff0 | 6;
+    }
+    *puVar1 = uVar2;
+    thunk_FUN_ff810580();
+    if (unaff_r11 == 0) {
+      unaff_r5 = (unaff_r5 & 0x7fff7fff) << 1;
+    }
+    else {
+      unaff_r5 = unaff_r5 >> 1;
+    }
+    if (unaff_r9 == 0) {
+      thunk_FUN_ff81056c();
+      puVar1 = *(uint **)(unaff_r8 + unaff_r4 * 0x18);
+      uVar2 = *puVar1 & 0xfffffff0 | 4;
+    }
+    else {
+      thunk_FUN_ff81056c();
+      puVar1 = *(uint **)(unaff_r8 + unaff_r4 * 0x18);
+      uVar2 = *puVar1 & 0xfffffff0 | 6;
+    }
+    *puVar1 = uVar2;
+    thunk_FUN_ff810580();
+  }
+  if (in_stack_00000008 == 0) {
+    thunk_FUN_ff81056c();
+    puVar1 = *(uint **)(iVar3 + 8);
+    uVar4 = *puVar1 & 0xfffffff0 | 4;
+  }
+  else {
+    thunk_FUN_ff81056c();
+    puVar1 = *(uint **)(iVar3 + 8);
+    uVar4 = *puVar1 & 0xfffffff0 | 6;
+  }
+  *puVar1 = uVar4;
+  thunk_FUN_ff810580();
+  if (in_stack_00000004 == 0) {
+    thunk_FUN_ff81056c();
+    puVar1 = *(uint **)(unaff_r8 + unaff_r4 * 0x18);
+    uVar4 = *puVar1 & 0xfffffff0 | 4;
+  }
+  else {
+    thunk_FUN_ff81056c();
+    puVar1 = *(uint **)(unaff_r8 + unaff_r4 * 0x18);
+    uVar4 = *puVar1 & 0xfffffff0 | 6;
+  }
+  *puVar1 = uVar4;
+  thunk_FUN_ff810580();
+                    /* WARNING: Could not recover jumptable at 0xff84327c. Too many branches */
+                    /* WARNING: Treating indirect jump as call */
+  (*UNRECOVERED_JUMPTABLE)(in_stack_00000048);
+  return;
+}
+
+
+
+========================================================================
+Function 4/10: FUN_ff843200 — audio area
+Address: 0xFF843200
+========================================================================
+Ghidra name: FUN_ff843200
+Size: 108 bytes
+
+
+void FUN_ff843200(undefined4 param_1,uint *param_2)
+
+{
+  uint *puVar1;
+  uint uVar2;
+  int unaff_r4;
+  int unaff_r8;
+  int in_stack_00000004;
+  code *UNRECOVERED_JUMPTABLE;
+  undefined4 in_stack_00000048;
+  
+  *param_2 = *param_2 & 0xfffffff0 | 4;
+  thunk_FUN_ff810580();
+  if (in_stack_00000004 == 0) {
+    thunk_FUN_ff81056c();
+    puVar1 = *(uint **)(unaff_r8 + unaff_r4 * 8);
+    uVar2 = *puVar1 & 0xfffffff0 | 4;
+  }
+  else {
+    thunk_FUN_ff81056c();
+    puVar1 = *(uint **)(unaff_r8 + unaff_r4 * 8);
+    uVar2 = *puVar1 & 0xfffffff0 | 6;
+  }
+  *puVar1 = uVar2;
+  thunk_FUN_ff810580();
+                    /* WARNING: Could not recover jumptable at 0xff84327c. Too many branches */
+                    /* WARNING: Treating indirect jump as call */
+  (*UNRECOVERED_JUMPTABLE)(in_stack_00000048);
+  return;
+}
+
+
+
+========================================================================
+Function 5/10: FUN_ff843300 — audio area
+Address: 0xFF843300
+========================================================================
+Ghidra name: FUN_ff843300
+Size: 28 bytes
+
+
+bool FUN_ff843300(uint param_1)
+
+{
+  return -1 < (int)((*(uint *)(DAT_ff843668 + 0xd4) >> (param_1 & 0xff)) << 0xf);
+}
+
+
+
+========================================================================
+Function 6/10: FUN_ff843400 — audio area
+Address: 0xFF843400
+========================================================================
+Ghidra name: FUN_ff843400
+Size: 32 bytes
+
+
+void FUN_ff843400(void)
+
+{
+  int iVar1;
+  
+  iVar1 = DAT_ff843668;
+  *(uint *)(DAT_ff843668 + 0xf4) = *(uint *)(DAT_ff843668 + 0xf4) & 0xfffffffe;
+  *(uint *)(iVar1 + 0xe4) = *(uint *)(iVar1 + 0xe4) & 0xfffffff8;
+  return;
+}
+
+
+
+========================================================================
+Function 7/10: FUN_ff8462ec — references 0xC0220000
+Address: 0xFF8462EC
+========================================================================
+[NO FUNCTION AT THIS ADDRESS]
+
+========================================================================
+Function 8/10: FUN_ff846208 — near AudioIC register refs
+Address: 0xFF846208
+========================================================================
+[NO FUNCTION AT THIS ADDRESS]
+
+========================================================================
+Function 9/10: sub_FF85DE1C — recording start (msg 2)
+Address: 0xFF85DE1C
+========================================================================
+Ghidra name: FUN_ff85de1c
+Size: 544 bytes
+
+
+void FUN_ff85de1c(void)
+
+{
+  ushort uVar1;
+  undefined4 *puVar2;
+  int iVar3;
+  int iVar4;
+  undefined4 *puVar5;
+  undefined4 uVar6;
+  undefined4 extraout_r1;
+  int iVar7;
+  undefined4 local_30;
+  int local_2c;
+  undefined4 local_28;
+  int local_24;
+  undefined4 local_20;
+  
+  iVar3 = DAT_ff85d02c;
+  *(undefined4 *)(DAT_ff85d02c + 0x2c) = 0;
+  *(undefined4 *)(iVar3 + 0x30) = 0;
+  iVar7 = *(int *)(iVar3 + 0x48);
+  uVar6 = FUN_ffad3d98(iVar7 * 1000,1000);
+  iVar4 = DAT_ff85d038;
+  *(undefined4 *)(iVar3 + 0x40) = uVar6;
+  if (*(int *)(iVar4 + 8) == 0) goto LAB_ff85deac;
+  uVar6 = 4;
+  if (iVar7 != 0x14) {
+    if (iVar7 < 0x15) {
+      if (iVar7 == 10 || iVar7 == 0xf) {
+        *(undefined4 *)(iVar4 + 0x14) = 2;
+        goto LAB_ff85deac;
+      }
+LAB_ff85dea0:
+      switchD_ff8443f8::default(DAT_ff85d974,DAT_ff85e330);
+      goto LAB_ff85deac;
+    }
+    if (iVar7 != 0x1e) {
+      if (iVar7 != 0x3c) goto LAB_ff85dea0;
+      uVar6 = 8;
+    }
+  }
+  *(undefined4 *)(iVar4 + 0x14) = uVar6;
+LAB_ff85deac:
+  puVar2 = DAT_ff85d028;
+  local_30 = 1;
+  if (*(short *)(iVar3 + 2) == 0) {
+    local_2c = *(int *)(iVar3 + 0x48);
+    local_28 = local_30;
+    local_24 = local_2c;
+    if (local_2c == 0x3c) {
+      local_30 = 100;
+      local_2c = DAT_ff85d688;
+      local_28 = local_30;
+      local_24 = DAT_ff85d688;
+    }
+  }
+  else {
+    local_24 = 0xf;
+    local_28 = 1;
+    local_2c = 1;
+    uVar1 = *(ushort *)(iVar3 + 4);
+    local_30 = FUN_ffad3d98((uint)uVar1,1000);
+    puVar2[2] = 0xf;
+    puVar2[4] = (uint)uVar1;
+  }
+  FUN_ff871c58(*(undefined4 *)(iVar3 + 0x80),0xa8,&local_24,2);
+  FUN_ff871c58(*(undefined4 *)(iVar3 + 0x80),0xa7,&local_28,2);
+  FUN_ff871c58(*(undefined4 *)(iVar3 + 0x80),0xa0,&local_2c,4);
+  FUN_ff871c58(*(undefined4 *)(iVar3 + 0x80),0xa1,&local_30,4);
+  FUN_ff86bff0(0xc,0,DAT_ff85d6a4);
+  puVar5 = DAT_ff85d6a4;
+  if (*(int *)(iVar3 + 0x44) == 2) {
+    *DAT_ff85d6a4 = DAT_ff85e334;
+    puVar5[1] = puVar5[1] + -0x278d00;
+  }
+  FUN_ff92f484(*puVar5,puVar5[1],DAT_ff85d038 + -0x18,DAT_ff85d038,FUN_ff85dde8);
+  XREF_FUN_ff92f734(*(undefined4 *)(iVar3 + 0x7c),extraout_r1,*(undefined4 *)(iVar3 + 0xb0),
+                    *(undefined4 *)(iVar3 + 0xb4),*(undefined4 *)(iVar3 + 0x80));
+  FUN_ff92e324(*puVar2,DAT_ff85e328 + -4);
+  XREF_FUN_ff8eda0c(*(undefined4 *)(DAT_ff85e338 + *(int *)(iVar3 + 0x44) * 8 + puVar2[3] * 4));
+  FUN_ff8edce8(&LAB_ff85dddc,0);
+  if (*(int *)(iVar4 + 8) != 0) {
+    FUN_ff92fcd8(&local_20);
+    FUN_ff847c0c(local_20,*(undefined4 *)(iVar4 + 0xc));
+    FUN_ff92fcd8(&local_20);
+    FUN_ff847c0c(local_20,*(undefined4 *)(iVar4 + 0xc));
+  }
+  *(undefined4 *)(iVar3 + 0x3c) = 2;
+  *(undefined1 **)(iVar3 + 0xa0) = &LAB_ff85dda8;
+  return;
+}
+
+
+
+========================================================================
+Function 10/10: UIFS_StartMovieRecord — recording trigger
+Address: 0xFF883D50
+========================================================================
+Ghidra name: UIFS_StartMovieRecord_FW
+Size: 52 bytes
+
+
+undefined4 UIFS_StartMovieRecord_FW(undefined4 param_1)
+
+{
+  if (*(int *)(DAT_ff8834f0 + 8) == 0) {
+    return 0xfffffff9;
+  }
+  if (*(int *)(DAT_ff8834f0 + 0x10) == 0) {
+    FUN_ff883d18(param_1);
+    return 0;
+  }
+  return 0xfffffffd;
+}
+
+
+
+
+========================================================================
+I/O Register References (0xFF842D00-0xFF843500)
+========================================================================
+

@@ -3798,3 +3798,136 @@ User confirmed: **zero artifacts** during aggressive zoom in/out. 14 drops are t
 - `bridge/src/main.cpp` — zoom delta handling in main loop
 - `chdk/core/ptp.c` — async zoom task via CreateTask
 - `chdk/core/ptp.h` — `PTP_CHDK_WEBCAM_ZOOM` flag
+
+---
+
+## Audio Investigation (2026-03-22)
+
+### Goal
+
+Investigate whether Linear PCM audio from the camera's movie recording pipeline can be captured alongside H.264 video and piggybacked on the PTP video frame response.
+
+### Audio Architecture (from Ghidra RE)
+
+The camera records MOV files with H.264 video + Linear PCM audio. The audio hardware chain:
+
+```
+Microphone → WM1400 codec (AudioIC) → SIO serial interface → firmware ISR → RAM buffer
+                                         ↓
+                                   0xC0220080 (data register, read one sample at a time)
+```
+
+**Key finding:** There is NO audio DMA engine. The WM1400 codec sends PCM samples serially through register `0xC0220080`. A firmware interrupt handler reads samples one by one and accumulates them into a software-managed RAM buffer. This is fundamentally different from video, which uses hardware DMA into large ring buffer slots.
+
+### Firmware Functions (addresses for fw 1.01a)
+
+| Function | Address | Purpose |
+|----------|---------|---------|
+| task_AudioTsk | 0xFF8465CC | Audio hardware init, creates task, configures WM1400 codec |
+| task_SoundRecord | 0xFF938648 | Standalone sound recording state manager |
+| task_WavWrite | 0xFF939FE0 | WAV file writer (standalone recording) |
+| InitializeSoundRec_FW | 0xFFA0981C | Init standalone sound recording |
+| StartSoundRecord_FW | 0xFFA0979C | Start standalone recording (allocates buffer) |
+| FUN_ff842d04 | 0xFF842D04 | SIO serial driver (I2C/SPI codec control, NOT data) |
+| FUN_ff847334 | 0xFF847334 | Audio codec command sender (via SIO) |
+| FUN_ff846764 | 0xFF846764 | AudioIC init — configures codec registers, creates AudioTsk |
+
+### RAM Structures
+
+| Address | Structure | Notes |
+|---------|-----------|-------|
+| 0x23C0 | AudioTsk state struct | +0x04=active flag, +0x38=message queue handle |
+| 0x276C | AudioIC hw state | +0x00=active, +0x04=packed config, +0x08=struct ptr (NOT buffer) |
+| 0xBDD8 | Sound recording state | +0x08=init flag, +0x0C=buffer ptr — all zeros during movie recording |
+| 0x8968 | Ring buffer struct (shared video/audio) | +0x108=MOV metadata, +0x170=MOV container header (NOT PCM data) |
+
+### I/O Registers
+
+| Register | Value during recording | Purpose |
+|----------|----------------------|---------|
+| 0xC0220000 | 0x49 | AudioIC status (active) |
+| 0xC0220080 | (serial data) | SIO channel 0 data register (PCM samples read here) |
+| 0xC0220084 | (serial clock) | SIO channel 0 clock register |
+| 0xC0223000 | 0x01 | Audio DMA control (enabled bit set) |
+| 0xC022301C | 0x40 | Audio DMA status |
+
+All 64 AudioIC registers (0xC0220000-0xC02200FC) contain only small codec config values (max 0x49). No RAM buffer addresses in any hardware register.
+
+### On-Camera Diagnostic Tests
+
+| Test | RAM Range | Result |
+|------|-----------|--------|
+| Cached RAM scan | 0x10000-0x50000 (256KB) | Zero changes between frames |
+| Cached RAM scan | 0x80000-0x280000 (2MB) | Zero changes between frames |
+| Uncached RAM scan | 0x41000000-0x41200000 (2MB) | Zero changes between frames |
+| AudioIC register dump | 0xC0220000-0xC02200FC | No buffer addresses found |
+| Audio DMA register dump | 0xC0223000-0xC0223030 | DMA enabled but no buffer address |
+| Standalone sound rec state | 0xBDD8 | Not initialized (zeros) — movie recording uses different path |
+| ring_buf+0x170 probe | 0x8AD8 | Contains MOV container atoms ("moov", "mvhd"), NOT PCM data |
+
+### Root Cause: Audio Capture Stalls During Webcam Mode
+
+Our SD write suppression kills audio capture:
+
+1. `spy_suppress_mov` sets `ring_buf+0x88 = 1` (drain mode)
+2. `task_MovWrite` enters drain mode — discards ALL queued messages
+3. Audio producer fills its buffer(s), signals "ready to consume"
+4. `task_MovWrite` discards the signal (drain mode)
+5. Audio producer never gets "buffer consumed" acknowledgment
+6. **Audio capture stalls** — buffer full, no consumer, DMA stops
+
+This is why RAM scans found zero changing data across 4MB+ of RAM. The audio hardware is initialized but the pipeline is dead.
+
+### Difference from Video
+
+Video works because the H.264 encoder runs continuously regardless of whether frames are consumed — it overwrites ring buffer slots in a circular fashion. Audio uses a producer-consumer protocol that requires acknowledgment, so it halts when the consumer (task_MovWrite) stops consuming.
+
+### Audio Buffer Found (with SD writes enabled)
+
+With SD writes enabled (full recording pipeline alive), RAM scan found PCM audio data in cached RAM:
+
+| Address | PCM-like words (of 16) | Notes |
+|---------|----------------------|-------|
+| 0x10000 | 5 | Weak match — may be other data |
+| 0x20000 | 6 | Weak match |
+| **0x50000** | **16** | **Strong match — all 16 sampled words are PCM** |
+| **0x70000** | **16** | **Strong match — all 16 sampled words are PCM** |
+| 0xE0000 | 15 | Strong match |
+| 0xF0000 | 14 | Strong match |
+| 0xF8000 | 15 | Strong match |
+
+**Audio buffer is in cached RAM at 0x50000-0x100000** (~700KB region). The uncached RAM mirror (0x40000000+) showed zero changes — audio uses CPU-driven accumulation via the SIO serial interface, not hardware DMA.
+
+Confirmed: with SD writes suppressed (+0x80=0), ALL these locations show zero changes. The audio pipeline stalls when task_MovWrite stops consuming.
+
+### Options for Audio Capture
+
+**Option 1: Selective drain mode** — Modify `spy_suppress_mov` to only drain video file writes (msg 1/case 1) but let audio messages (case 4/5/6) flow through task_MovWrite. This keeps the audio pipeline alive. Then intercept audio data from the audio ring buffer as it flows.
+
+**Option 2: Direct audio DMA consumption** — Bypass task_MovWrite entirely. Find the audio DMA ping-pong buffers and manually send the "consumed" signal back to the DMA engine, keeping audio capture alive. Read PCM data directly from the DMA buffers.
+
+### Piggybacking Audio on Video (planned approach)
+
+Audio cannot use a separate PTP round-trip (same issue as debug frames — would miss one H.264 frame). Instead, piggyback audio on the video frame PTP response:
+
+```
+Response: param1=video_size, param2=audio_size, param3=gf_rc
+Data:     [H.264 AVCC frame (video_size bytes)][PCM audio (audio_size bytes)]
+```
+
+At 11025 Hz mono 16-bit, audio per frame = ~735 bytes. Combined with video (~40KB) = ~41KB — well under the 130KB malloc limit. Requires memcpy (breaks zero-copy) but only adds ~1ms per frame.
+
+### Files Created During Investigation
+
+| File | Content |
+|------|---------|
+| `firmware-analysis/DecompileAudioPipeline.java` | Ghidra script: audio task functions |
+| `firmware-analysis/audio_pipeline_decompiled.txt` | Decompiled: task_AudioTsk, task_SoundRecord, etc. |
+| `firmware-analysis/DecompileAudioHardware.java` | Ghidra script: AudioIC hardware layer |
+| `firmware-analysis/audio_hardware_decompiled.txt` | Decompiled: FUN_ff847334, AudioIC vicinity |
+| `firmware-analysis/DecompileAudioDMA.java` | Ghidra script: SIO driver, recording start |
+| `firmware-analysis/audio_dma_decompiled.txt` | Decompiled: FUN_ff842d04 (SioDrv), sub_FF85DE1C |
+| `firmware-analysis/DecompileSIOInterrupt.java` | Ghidra script: SIO interrupt chain |
+| `firmware-analysis/sio_interrupt_decompiled.txt` | Decompiled: SIO handlers, AudioTsk callbacks |
+| `firmware-analysis/ReadAudioAddresses.java` | Ghidra script: ROM data value reader |
+| `firmware-analysis/audio_addresses.txt` | ROM→RAM address mappings for audio structs |

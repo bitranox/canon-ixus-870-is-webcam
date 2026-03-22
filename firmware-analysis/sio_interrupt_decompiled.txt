@@ -1,0 +1,460 @@
+========================================================================
+SIO Interrupt Handler Chain — Audio PCM Buffer Search
+Firmware: IXUS 870 IS / SD 880 IS, version 1.01a
+========================================================================
+
+--- Key ROM Data Values ---
+  0xFF842B74 (SioDrv param) = 0x00002710
+  0xFF842B78 (SioDrv string) = 0x446F6953
+  0xFF842B8C (SIO register table) = 0x00002230
+  0xFF84328C (SioDrv param2) = 0x0000027F
+  0xFF847404 (AudioTsk callback1 addr) = 0xFF8465AC
+  0xFF847408 (AudioTsk callback2 addr) = 0xFF8465BC
+
+--- SIO Register Table ---
+  Table base (DAT_ff842b8c) = 0x00002230
+
+========================================================================
+Function 1/14: FUN_ff842cb0 — SIO command handler (called by SioDrv)
+Address: 0xFF842CB0
+========================================================================
+Ghidra name: FUN_ff842cb0
+Size: 72 bytes
+
+
+void FUN_ff842cb0(undefined4 param_1,undefined4 param_2,undefined4 param_3,code *param_4,
+                 undefined4 param_5,code *UNRECOVERED_JUMPTABLE,undefined4 param_7)
+
+{
+  (*param_4)(param_5);
+  (*(code *)*DAT_ff842b70)(param_1,param_2,param_3);
+                    /* WARNING: Could not recover jumptable at 0xff842cf4. Too many branches */
+                    /* WARNING: Treating indirect jump as call */
+  (*UNRECOVERED_JUMPTABLE)(param_7);
+  return;
+}
+
+
+
+========================================================================
+Function 2/14: FUN_ff842b74 — SioDrv referenced value
+Address: 0xFF842B74
+========================================================================
+[NO FUNCTION AT THIS ADDRESS]
+
+========================================================================
+Function 3/14: FUN_ff8465ac — AudioTsk callback 1
+Address: 0xFF8465AC
+========================================================================
+Ghidra name: FUN_ff8465ac
+Size: 16 bytes
+
+
+void FUN_ff8465ac(void)
+
+{
+  *(undefined4 *)(DAT_ff846834 + 0xac) = 0x46;
+  return;
+}
+
+
+
+========================================================================
+Function 4/14: FUN_ff8465bc — AudioTsk callback 2
+Address: 0xFF8465BC
+========================================================================
+Ghidra name: FUN_ff8465bc
+Size: 16 bytes
+
+
+void FUN_ff8465bc(void)
+
+{
+  *(undefined4 *)(DAT_ff846834 + 0xac) = 0x44;
+  return;
+}
+
+
+
+========================================================================
+Function 5/14: FUN_ff842a00 — SIO area
+Address: 0xFF842A00
+========================================================================
+Ghidra name: FUN_ff842a00
+Size: 356 bytes
+
+
+int FUN_ff842a00(int param_1,int param_2,int param_3,undefined4 param_4,int param_5)
+
+{
+  int iVar1;
+  uint *puVar2;
+  int unaff_r4;
+  byte *unaff_r5;
+  int unaff_r6;
+  int iVar3;
+  int unaff_r7;
+  int unaff_r8;
+  int in_r12;
+  bool in_ZR;
+  bool in_CY;
+  
+  *(undefined4 *)(param_1 + 0x20) = param_4;
+  *(undefined4 *)(param_1 + 0x28) = *(undefined4 *)(param_2 + 4);
+  *(undefined4 *)(param_1 + 0x2c) = *(undefined4 *)(in_r12 + param_3 * 4);
+  *(uint *)(param_1 + 8) =
+       (uint)*unaff_r5 << 8 | *(int *)(unaff_r5 + 4) << 0x10 | *(int *)(unaff_r5 + 8) << 0x11 |
+       *(int *)(unaff_r5 + 0xc) << 0x12 | *(int *)(unaff_r5 + 0x10) << 0x13;
+                    /* WARNING: Could not recover jumptable at 0xff842a40. Too many branches */
+                    /* WARNING: Treating indirect jump as call */
+  if (!in_CY || in_ZR) {
+    iVar1 = (*(code *)(unaff_r4 * 4 + -0x7bd5b8))();
+    return iVar1;
+  }
+  **(undefined4 **)(param_5 + 0xc) = *(undefined4 *)(param_5 + 8);
+  iVar1 = DAT_ff842b88;
+  if (*(char *)(DAT_ff842b88 + unaff_r4) == '\0') {
+    thunk_FUN_ff81056c();
+    puVar2 = *(uint **)(unaff_r8 + unaff_r6 * 8);
+    *puVar2 = *puVar2 & 0xfffffff1 | 8;
+    thunk_FUN_ff810580();
+    thunk_FUN_ff81056c();
+    iVar3 = unaff_r8 + unaff_r6 * 8;
+    **(uint **)(iVar3 + 8) = **(uint **)(iVar3 + 8) & 0xfffffff1 | 8;
+    thunk_FUN_ff810580();
+    if (*(int *)(iVar3 + 0x10) != -1) {
+      thunk_FUN_ff81056c();
+      **(uint **)(iVar3 + 0x10) = **(uint **)(iVar3 + 0x10) & 0xfffffff1 | 8;
+      thunk_FUN_ff810580();
+    }
+  }
+  *(char *)(iVar1 + unaff_r4) = *(char *)(iVar1 + unaff_r4) + '\x01';
+  FUN_ff827584(*(undefined4 *)(unaff_r7 + unaff_r4 * 4));
+  return param_5;
+}
+
+
+
+========================================================================
+Function 6/14: FUN_ff842a80 — SIO area
+Address: 0xFF842A80
+========================================================================
+Ghidra name: FUN_ff842a80
+Size: 220 bytes
+
+
+int FUN_ff842a80(int param_1,uint *param_2,undefined4 param_3,undefined4 param_4,int param_5)
+
+{
+  int iVar1;
+  uint *puVar2;
+  uint uVar3;
+  int unaff_r4;
+  int unaff_r5;
+  int unaff_r6;
+  int iVar4;
+  int unaff_r7;
+  int unaff_r8;
+  
+  uVar3 = *(uint *)(unaff_r5 + 0x14);
+  if (uVar3 == 1 || uVar3 == 3) {
+    uVar3 = uVar3 | *(int *)(unaff_r5 + 0x18) << 2 | (uint)*(byte *)(unaff_r5 + 0x1c) << 4 |
+            *(int *)(unaff_r5 + 0x20) << 8;
+    *(uint *)(param_1 + 0x10) = uVar3;
+    *param_2 = uVar3;
+  }
+  else {
+    *(undefined4 *)(param_1 + 0x10) = 0;
+  }
+  **(undefined4 **)(param_5 + 0xc) = *(undefined4 *)(param_5 + 8);
+  iVar1 = DAT_ff842b88;
+  if (*(char *)(DAT_ff842b88 + unaff_r4) == '\0') {
+    thunk_FUN_ff81056c();
+    puVar2 = *(uint **)(unaff_r8 + unaff_r6 * 8);
+    *puVar2 = *puVar2 & 0xfffffff1 | 8;
+    thunk_FUN_ff810580();
+    thunk_FUN_ff81056c();
+    iVar4 = unaff_r8 + unaff_r6 * 8;
+    **(uint **)(iVar4 + 8) = **(uint **)(iVar4 + 8) & 0xfffffff1 | 8;
+    thunk_FUN_ff810580();
+    if (*(int *)(iVar4 + 0x10) != -1) {
+      thunk_FUN_ff81056c();
+      **(uint **)(iVar4 + 0x10) = **(uint **)(iVar4 + 0x10) & 0xfffffff1 | 8;
+      thunk_FUN_ff810580();
+    }
+  }
+  *(char *)(iVar1 + unaff_r4) = *(char *)(iVar1 + unaff_r4) + '\x01';
+  FUN_ff827584(*(undefined4 *)(unaff_r7 + unaff_r4 * 4));
+  return param_5;
+}
+
+
+
+========================================================================
+Function 7/14: FUN_ff842b00 — SIO area
+Address: 0xFF842B00
+========================================================================
+Ghidra name: FUN_ff842b00
+Size: 100 bytes
+
+
+undefined4 FUN_ff842b00(void)
+
+{
+  int unaff_r4;
+  int unaff_r5;
+  int unaff_r6;
+  int iVar1;
+  int unaff_r7;
+  int unaff_r8;
+  undefined4 in_stack_00000000;
+  
+  thunk_FUN_ff81056c();
+  iVar1 = unaff_r8 + unaff_r6 * 8;
+  **(uint **)(iVar1 + 8) = **(uint **)(iVar1 + 8) & 0xfffffff1 | 8;
+  thunk_FUN_ff810580();
+  if (*(int *)(iVar1 + 0x10) != -1) {
+    thunk_FUN_ff81056c();
+    **(uint **)(iVar1 + 0x10) = **(uint **)(iVar1 + 0x10) & 0xfffffff1 | 8;
+    thunk_FUN_ff810580();
+  }
+  *(char *)(unaff_r5 + unaff_r4) = *(char *)(unaff_r5 + unaff_r4) + '\x01';
+  FUN_ff827584(*(undefined4 *)(unaff_r7 + unaff_r4 * 4));
+  return in_stack_00000000;
+}
+
+
+
+========================================================================
+Function 8/14: FUN_ff842b40 — SIO area
+Address: 0xFF842B40
+========================================================================
+Ghidra name: FUN_ff842b40
+Size: 36 bytes
+
+
+undefined4
+FUN_ff842b40(undefined4 param_1,undefined4 *param_2,undefined4 param_3,undefined4 param_4,
+            undefined4 param_5)
+
+{
+  int unaff_r4;
+  int unaff_r5;
+  int unaff_r7;
+  
+  *param_2 = param_3;
+  thunk_FUN_ff810580();
+  *(char *)(unaff_r5 + unaff_r4) = *(char *)(unaff_r5 + unaff_r4) + '\x01';
+  FUN_ff827584(*(undefined4 *)(unaff_r7 + unaff_r4 * 4));
+  return param_5;
+}
+
+
+
+========================================================================
+Function 9/14: FUN_ff842c00 — SIO area
+Address: 0xFF842C00
+========================================================================
+Ghidra name: FUN_ff842c00
+Size: 96 bytes
+
+
+undefined4 FUN_ff842c00(int param_1,int param_2)
+
+{
+  undefined4 *puVar1;
+  uint uVar2;
+  int iVar3;
+  int *unaff_r4;
+  undefined4 uStack00000000;
+  
+  iVar3 = param_1 + param_2 * 0x18;
+  **(undefined4 **)(iVar3 + 8) = *(undefined4 *)(iVar3 + 0xc);
+  param_1 = param_1 + *unaff_r4 * 0x18;
+  puVar1 = *(undefined4 **)(param_1 + 0x10);
+  if (puVar1 != (undefined4 *)0xffffffff) {
+    *puVar1 = *(undefined4 *)(param_1 + 0x14);
+  }
+  uStack00000000 = DAT_ff843288;
+  FUN_ff8279ec(*(undefined4 *)(DAT_ff842b70 + 8));
+  uVar2 = unaff_r4[1];
+  if (((uVar2 & 1) - 1 & uVar2) != 0) {
+    iVar3 = FUN_ff812340(uVar2 >> 1);
+    if (iVar3 == -1) {
+      switchD_ff8443f8::default(s_KerSem_c_ff827564,DAT_ff827620);
+    }
+    return 0;
+  }
+  return 7;
+}
+
+
+
+========================================================================
+Function 10/14: FUN_ff842c40 — SIO area
+Address: 0xFF842C40
+========================================================================
+Ghidra name: FUN_ff842c40
+Size: 44 bytes
+
+
+undefined4 FUN_ff842c40(void)
+
+{
+  int iVar1;
+  uint uVar2;
+  int unaff_r4;
+  undefined4 uStack00000000;
+  
+  uStack00000000 = DAT_ff843288;
+  FUN_ff8279ec(*(undefined4 *)(DAT_ff842b70 + 8));
+  uVar2 = *(uint *)(unaff_r4 + 4);
+  if (((uVar2 & 1) - 1 & uVar2) != 0) {
+    iVar1 = FUN_ff812340(uVar2 >> 1);
+    if (iVar1 == -1) {
+      switchD_ff8443f8::default(s_KerSem_c_ff827564,DAT_ff827620);
+    }
+    return 0;
+  }
+  return 7;
+}
+
+
+
+========================================================================
+Function 11/14: FUN_ff842c80 — SIO area (before cb0)
+Address: 0xFF842C80
+========================================================================
+Ghidra name: FUN_ff842c80
+Size: 1 bytes
+
+
+void FUN_ff842c80(uint param_1,uint *param_2)
+
+{
+  *param_2 = param_1 & 0xffffff00 | 0x80000000;
+  return;
+}
+
+
+
+========================================================================
+Function 12/14: FUN_ff930910 — audio codec params (task_MovWrite)
+Address: 0xFF930910
+========================================================================
+Ghidra name: FUN_ff930910
+Size: 176 bytes
+
+
+void FUN_ff930910(void)
+
+{
+  int iVar1;
+  int iVar2;
+  undefined4 uVar3;
+  
+  iVar1 = DAT_ff93050c;
+  iVar2 = *(int *)(DAT_ff93050c + 0x94);
+  uVar3 = DAT_ff930aec;
+  if (iVar2 != 0xf) {
+    if (iVar2 == 0x14) {
+      uVar3 = 2000;
+    }
+    else {
+      uVar3 = DAT_ff930af0;
+      if ((iVar2 != 0x1e) && (uVar3 = DAT_ff930500, iVar2 != 0x3c)) {
+        switchD_ff8443f8::default(DAT_ff930ad8,0x9e0);
+        goto LAB_ff930960;
+      }
+    }
+  }
+  *(undefined4 *)(DAT_ff93050c + 0xec) = uVar3;
+LAB_ff930960:
+  iVar2 = DAT_ff930af4;
+  *(int *)(iVar1 + 0xf0) = *(int *)(iVar1 + 0x24) * 100;
+  FUN_ff9306b4(iVar2 + 0xc,*(undefined4 *)(iVar1 + 0xf4));
+  FUN_ff9306b4(iVar2 + 0x10,*(undefined4 *)(iVar1 + 0xf4));
+  FUN_ff9306b4(iVar2 + 0x14,*(undefined4 *)(iVar1 + 0xec));
+  FUN_ff9306b4(iVar2 + 0x18,*(undefined4 *)(iVar1 + 0xf0));
+  FUN_ffad1878_calledByPipeline(iVar2 + 0x68,&stack0xfffffff8,4);
+  return;
+}
+
+
+
+========================================================================
+Function 13/14: FUN_ff92fb50 — ring buffer cleanup (msg 7)
+Address: 0xFF92FB50
+========================================================================
+Ghidra name: FUN_ff92fb50
+Size: 252 bytes
+
+
+void FUN_ff92fb50(undefined4 param_1,int param_2)
+
+{
+  int iVar1;
+  undefined4 uVar2;
+  int iVar3;
+  undefined4 *puVar4;
+  int iVar5;
+  undefined4 unaff_r4;
+  undefined4 unaff_r5;
+  uint uVar6;
+  undefined4 in_lr;
+  bool bVar7;
+  
+  uVar2 = FUN_ff827f4c(DAT_ff930508,&LAB_ff92fb40);
+  iVar1 = DAT_ff92ec0c;
+  *(undefined4 *)(DAT_ff92ec0c + 0xe0) = uVar2;
+  if (*(short *)(iVar1 + 2) == 0) {
+    uVar6 = *(uint *)(iVar1 + 0x14);
+    if ((*(uint *)(iVar1 + 0x20) < uVar6) && (*(int *)(iVar1 + 0x74) != 0)) {
+      FUN_ff92f88c(uVar6,*(int *)(iVar1 + 200) - uVar6);
+      iVar5 = (*(int *)(iVar1 + 0x20) + *(int *)(iVar1 + 0x74)) - *(int *)(iVar1 + 0xc4);
+      uVar6 = *(uint *)(iVar1 + 0x14);
+    }
+    else {
+      iVar5 = (*(uint *)(iVar1 + 0x20) + *(int *)(iVar1 + 0x74)) - uVar6;
+    }
+    FUN_ff92f88c(uVar6,iVar5);
+  }
+  else {
+    XREF_FUN_ff92f8f0();
+  }
+  if ((param_2 == 1) || (*(int *)(iVar1 + 0x3c) != 0)) {
+    FUN_ff92f6dc(3,0,0);
+  }
+  FUN_ff92f6dc(4,0,0);
+  FUN_ff92f6dc(5,0,0);
+  FUN_ff92f6dc(6,0,0);
+  *(undefined4 *)(iVar1 + 0xe4) = param_1;
+  iVar5 = DAT_ff9304e0;
+  iVar1 = DAT_ff92ec0c;
+  iVar3 = *(int *)(DAT_ff92ec0c + 0x10);
+  uVar6 = iVar3 + 1;
+  bVar7 = 0x31 < uVar6;
+  *(uint *)(DAT_ff92ec0c + 0x10) = uVar6;
+  if (bVar7) {
+    uVar6 = 0;
+  }
+  puVar4 = (undefined4 *)(iVar5 + iVar3 * 0xc);
+  if (bVar7) {
+    *(uint *)(iVar1 + 0x10) = uVar6;
+  }
+  *puVar4 = 7;
+  puVar4[1] = 0;
+  uVar2 = DAT_ff9304e4;
+  puVar4[2] = 0;
+  FUN_ff8279ec(*(undefined4 *)(iVar1 + 0xc),puVar4,1000,DAT_ff92f6c0,uVar2,unaff_r4,unaff_r5,in_lr);
+  return;
+}
+
+
+
+========================================================================
+Function 14/14: DAT_ff842b8c — SIO register table base
+Address: 0xFF842B8C
+========================================================================
+Value: 0x00002230
+

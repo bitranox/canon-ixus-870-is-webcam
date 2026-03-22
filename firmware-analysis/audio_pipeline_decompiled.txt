@@ -1,0 +1,405 @@
+========================================================================
+Audio Recording Pipeline — Decompiled Functions
+Firmware: IXUS 870 IS / SD 880 IS, version 1.01a
+Purpose: Trace PCM audio buffer addresses for webcam audio capture
+========================================================================
+
+========================================================================
+Function 1/8: task_AudioTsk — main audio processing task
+Address: 0xFF8465CC
+========================================================================
+Function name in Ghidra: FUN_ff8465cc
+Function size: 76 bytes
+
+Calls:
+  -> 0xff827994 (FUN_ff827994)
+  -> 0xff827584 (FUN_ff827584)
+  -> 0xff847334 (FUN_ff847334)
+
+
+undefined4 FUN_ff8465cc(void)
+
+{
+  int *piVar1;
+  int iVar2;
+  int iVar3;
+  char cVar4;
+  byte in_Q;
+  
+  iVar2 = DAT_ff846854;
+  FUN_ff827994(*(undefined4 *)(DAT_ff846854 + 0x34),DAT_ff846850,s_AudioIC_WM1400_c_ff84683c,
+               DAT_ff846838);
+  FUN_ff847334(DAT_ff846858);
+  FUN_ff847334(DAT_ff84685c);
+  FUN_ff847334(0x5f00);
+  *(undefined4 *)(iVar2 + 4) = 1;
+  FUN_ff827584(*(undefined4 *)(iVar2 + 0x2c));
+  if (0 < *(int *)*DAT_ff81b11c) {
+    switchD_ff8443f8::default(s_KerTask_c_ff81b120,DAT_ff81b1c8);
+  }
+  if (0 < *DAT_ff81b130) {
+    switchD_ff8443f8::default(s_KerTask_c_ff81b120,0x21c);
+  }
+  piVar1 = DAT_ff8121b4;
+  if (*DAT_ff8121ac == 0) {
+    *(char *)(*DAT_ff8121b4 + 0x4b) = *(char *)(*DAT_ff8121b4 + 0x4b) + '\x01';
+    iVar2 = FUN_ff815778(0xffffffff);
+    cVar4 = '\0';
+    if (iVar2 != 0) {
+      FUN_ff8157ec();
+      iVar3 = *piVar1;
+      iVar2 = (*(byte *)(iVar3 + 0x4b) - 1) * 0x1000000;
+      *(char *)(iVar3 + 0x4b) = (char)((uint)iVar2 >> 0x18);
+      if (iVar2 >> 0x18 == 0) {
+        FUN_ff811970((uint)(byte)(cVar4 << 1 | 8U | in_Q) << 0x1b | 0x80);
+      }
+      return 0;
+    }
+    iVar3 = *piVar1;
+    iVar2 = (*(byte *)(iVar3 + 0x4b) - 1) * 0x1000000;
+    *(char *)(iVar3 + 0x4b) = (char)((uint)iVar2 >> 0x18);
+    if (iVar2 >> 0x18 == 0) {
+      FUN_ff811970((uint)(in_Q | 8) << 0x1b | 0x80);
+    }
+  }
+  return 0xffffffff;
+}
+
+
+
+========================================================================
+Function 2/8: task_SoundRecord — recording state manager
+Address: 0xFF938648
+========================================================================
+Function name in Ghidra: FUN_ff938648
+Function size: 80 bytes
+
+Calls:
+  -> 0xff8279ec (FUN_ff8279ec)
+  -> 0xff827098 (FUN_ff827098)
+
+
+void FUN_ff938648(void)
+
+{
+  int iVar1;
+  undefined4 uVar2;
+  undefined4 uVar3;
+  undefined4 *in_r3;
+  undefined4 *local_14;
+  
+  uVar3 = DAT_ff938c54;
+  uVar2 = DAT_ff938c50;
+  iVar1 = DAT_ff93856c;
+  *(undefined4 *)(DAT_ff93856c + 0xc) = 0;
+  local_14 = in_r3;
+  do {
+    FUN_ff827098(*(undefined4 *)(iVar1 + 0x10),&local_14,0);
+    (*(code *)*local_14)();
+    FUN_ff8279ec(*(undefined4 *)(iVar1 + 0x14),local_14,uVar2,s_SoundRecorder_c_ff938570,uVar3);
+  } while( true );
+}
+
+
+
+========================================================================
+Function 3/8: task_SoundPlay — playback task
+Address: 0xFF938FB4
+========================================================================
+Function name in Ghidra: FUN_ff938fb4
+Function size: 100 bytes
+
+Calls:
+  -> 0xff8279ec (FUN_ff8279ec)
+  -> 0xff827098 (FUN_ff827098)
+
+
+void FUN_ff938fb4(void)
+
+{
+  int iVar1;
+  undefined4 uVar2;
+  undefined4 uVar3;
+  undefined4 *in_r3;
+  undefined4 *local_1c;
+  
+  uVar3 = DAT_ff939170;
+  uVar2 = DAT_ff93916c;
+  iVar1 = DAT_ff939150;
+  *(undefined4 *)(DAT_ff939150 + 0x10) = 1;
+  local_1c = in_r3;
+  do {
+    do {
+      FUN_ff827098(*(undefined4 *)(iVar1 + 0x14),&local_1c,0);
+      (*(code *)*local_1c)();
+      FUN_ff8279ec(*(undefined4 *)(iVar1 + 0x18),local_1c,uVar2,s_SoundPlayer_c_ff939154,uVar3);
+    } while (*(int *)(iVar1 + 0xc) == 0);
+    *(undefined4 *)(iVar1 + 0xc) = 0;
+    *(undefined4 *)(iVar1 + 8) = 0;
+  } while( true );
+}
+
+
+
+========================================================================
+Function 4/8: task_WavWrite — WAV file writer
+Address: 0xFF939FE0
+========================================================================
+Function name in Ghidra: FUN_ff939fe0
+Function size: 220 bytes
+
+Calls:
+  -> 0xff823ba0 (FUN_ff823ba0)
+  -> 0xff8279ec (FUN_ff8279ec)
+  -> 0xff827098 (FUN_ff827098)
+  -> 0xff81b1cc (default)
+
+
+/* WARNING: Removing unreachable block (ram,0xff93a0b8) */
+
+void FUN_ff939fe0(void)
+
+{
+  undefined4 uVar1;
+  int iVar2;
+  undefined4 uVar3;
+  int iVar4;
+  code *pcVar5;
+  int *in_r3;
+  int *local_14;
+  
+  iVar2 = DAT_ff93a2b4;
+  uVar1 = DAT_ff93a2b0;
+  local_14 = in_r3;
+  do {
+    FUN_ff827098(*(undefined4 *)(iVar2 + 0xc),&local_14,0);
+    if (*local_14 == 0) {
+      if (*(int *)(iVar2 + 8) == 0) {
+        iVar4 = FUN_ff823ba0(*(undefined4 *)(iVar2 + 0x14),local_14[1],local_14[2]);
+        *(undefined4 *)(DAT_ff93a2b8 + (char)local_14[3] * 4) = 0;
+        if (iVar4 == -1) {
+          iVar4 = 0;
+        }
+        *(int *)(iVar2 + 0x18) = *(int *)(iVar2 + 0x18) + iVar4;
+        if (local_14[2] != iVar4) {
+          *(undefined4 *)(iVar2 + 8) = 1;
+          pcVar5 = *(code **)(iVar2 + 0x38);
+          uVar3 = 0x1d;
+          goto LAB_ff93a080;
+        }
+      }
+    }
+    else if (*local_14 == 2) {
+      uVar3 = *(undefined4 *)(iVar2 + 0x18);
+      pcVar5 = *(code **)(iVar2 + 0x34);
+LAB_ff93a080:
+      (*pcVar5)(uVar3);
+    }
+    else {
+      switchD_ff8443f8::default(s_WavWriter_c_ff93a2bc,0xd3);
+    }
+    FUN_ff8279ec(*(undefined4 *)(iVar2 + 0x10),local_14,uVar1,s_WavWriter_c_ff93a2bc,0xd6);
+  } while( true );
+}
+
+
+
+========================================================================
+Function 5/8: InitializeSoundRec_FW — sound recording initialization
+Address: 0xFFA0981C
+========================================================================
+Function name in Ghidra: FUN_ffa0981c
+Function size: 52 bytes
+
+Calls:
+  -> 0xff827904 (FUN_ff827904)
+
+
+undefined4 FUN_ffa0981c(void)
+
+{
+  int iVar1;
+  undefined4 uVar2;
+  
+  iVar1 = DAT_ffa09a28;
+  if (*(int *)(DAT_ffa09a28 + 8) != 1) {
+    uVar2 = FUN_ff827904(0,0);
+    *(undefined4 *)(iVar1 + 4) = uVar2;
+    *(undefined4 *)(iVar1 + 8) = 1;
+  }
+  return 0;
+}
+
+
+
+========================================================================
+Function 6/8: StartSoundRecord_FW — start sound recording
+Address: 0xFFA0979C
+========================================================================
+Function name in Ghidra: FUN_ffa0979c
+Function size: 88 bytes
+
+Calls:
+  -> 0xff827b68 (FUN_ff827b68)
+  -> 0xffa0987c (FUN_ffa0987c)
+  -> 0xff8fdd0c (FUN_ff8fdd0c)
+
+
+int * FUN_ffa0979c(int *param_1,undefined4 param_2,undefined4 param_3,undefined4 param_4)
+
+{
+  int *piVar1;
+  int iVar2;
+  int *piVar3;
+  int iVar4;
+  uint uVar5;
+  int *piVar6;
+  undefined4 unaff_r4;
+  int iVar7;
+  undefined4 unaff_r5;
+  undefined4 unaff_r6;
+  
+  iVar7 = DAT_ffa09a2c * *param_1;
+  iVar4 = FUN_ff827b68(iVar7);
+  iVar2 = DAT_ffa09a28;
+  *(int *)(DAT_ffa09a28 + 0xc) = iVar4;
+  *(int *)(iVar2 + 0x20) = iVar7;
+  *(int *)(iVar2 + 0x10) = iVar4 + *(int *)(iVar2 + 0x24);
+  FUN_ff8fdd0c(s_SoundDataSize_ffa09a30,iVar7);
+  FUN_ffa0987c();
+  piVar1 = DAT_ff84c2a0;
+  iVar4 = *(int *)(iVar2 + 0x10);
+  uVar5 = *(uint *)(iVar2 + 0x20);
+  if (*DAT_ff84c2a0 == 0) {
+    return (int *)&DAT_00000011;
+  }
+  if (iVar4 != 0) {
+    FUN_ff869764(DAT_ff84c2a0[1],0,uVar5,param_4,unaff_r4,unaff_r5,unaff_r6);
+    iVar2 = FUN_ff84c170(s_RECORDSOUNDDATA_ffa09a40);
+    piVar3 = (int *)FUN_ff827abc(0xc);
+    *piVar3 = iVar4;
+    piVar3[1] = uVar5;
+    piVar6 = piVar3;
+    if (piVar3 == (int *)0x0) {
+      piVar6 = (int *)&DAT_00000005;
+    }
+    piVar3[2] = uVar5 | 0x80000000;
+    if (piVar3 != (int *)0x0) {
+      iVar4 = FUN_ff84c144(s_RECORDSOUNDDATA_ffa09a40,piVar6);
+      if (iVar4 == 0) {
+        FUN_ff84c118(piVar6);
+        piVar6 = (int *)0x1;
+      }
+      else {
+        if (iVar2 != 0) {
+          FUN_ff84c118(iVar2);
+        }
+        piVar6 = (int *)0x0;
+      }
+    }
+    FUN_ff869884(piVar1[1]);
+    return piVar6;
+  }
+  return (int *)0x3;
+}
+
+
+
+========================================================================
+Function 7/8: TerminateSoundRec_FW — terminate sound recording
+Address: 0xFFA09850
+========================================================================
+Function name in Ghidra: FUN_ffa09850
+Function size: 44 bytes
+
+Calls:
+  -> 0xff869250 (FUN_ff869250)
+
+
+undefined4 FUN_ffa09850(void)
+
+{
+  int iVar1;
+  
+  iVar1 = DAT_ffa09a28;
+  if (*(int *)(DAT_ffa09a28 + 8) == 1) {
+    FUN_ff869250(*(undefined4 *)(DAT_ffa09a28 + 4));
+    *(undefined4 *)(iVar1 + 8) = 0;
+    return 0;
+  }
+  return 0x17;
+}
+
+
+
+========================================================================
+Function 8/8: FreeBufferForSoundRec_FW — free sound recording buffer (reveals buffer addr)
+Address: 0xFFA09720
+========================================================================
+Function name in Ghidra: FUN_ffa09720
+Function size: 12 bytes
+
+
+undefined4 FUN_ffa09720(void)
+
+{
+  int iVar1;
+  undefined4 *puVar2;
+  undefined4 *puVar3;
+  undefined4 *puVar4;
+  undefined4 uVar5;
+  undefined4 *puVar6;
+  uint in_cpsr;
+  
+  iVar1 = DAT_ff813b4c;
+  if (*(uint *)(DAT_ffa09a28 + 0xc) == 0) {
+    return 0;
+  }
+  puVar3 = *(undefined4 **)((*(uint *)(DAT_ffa09a28 + 0xc) & 0xbfffffff) - 4);
+  if (puVar3 == (undefined4 *)0x0) {
+    return 0;
+  }
+  puVar6 = puVar3 + -2;
+  FUN_ff812374(*(undefined4 *)(DAT_ff813b4c + 0x14),0);
+  *(int *)(iVar1 + 0x20) = *(int *)(iVar1 + 0x20) - puVar3[-1];
+  *(int *)(iVar1 + 0x28) = *(int *)(iVar1 + 0x28) + -1;
+  puVar2 = (undefined4 *)(iVar1 + 8);
+  puVar4 = *(undefined4 **)(iVar1 + 0x10);
+  do {
+    if (puVar4 == (undefined4 *)0x0) {
+      uVar5 = puVar2[2];
+LAB_ff813af8:
+      *puVar3 = uVar5;
+LAB_ff813afc:
+      puVar2[2] = puVar6;
+      if ((undefined4 *)((int)puVar2 + puVar2[1] + 8) == puVar6) {
+        puVar2[1] = puVar2[1] + puVar3[-1] + 8;
+        puVar2[2] = *puVar3;
+      }
+      in_cpsr = in_cpsr & 0xffffff00;
+      iVar1 = FUN_ff815d1c(*(undefined4 *)(iVar1 + 0x14));
+      if (iVar1 != 0 || (in_cpsr >> 0x1e & 1) == 0) {
+        FUN_ff815ed8(iVar1);
+        return 0;
+      }
+      return 0xffffffff;
+    }
+    if (puVar6 < puVar4) {
+      *puVar3 = puVar4;
+      if ((undefined4 *)((int)puVar6 + puVar3[-1] + 8) != puVar4) goto LAB_ff813afc;
+      puVar3[-1] = puVar3[-1] + puVar4[1] + 8;
+      uVar5 = puVar4[2];
+      goto LAB_ff813af8;
+    }
+    puVar2 = puVar4;
+    puVar4 = (undefined4 *)puVar4[2];
+  } while( true );
+}
+
+
+
+
+
+========================================================================
+END OF PRIMARY DECOMPILATION
+========================================================================

@@ -1,0 +1,61 @@
+========================================================================
+Audio Pipeline — ROM Data Values (RAM Address Pointers)
+Firmware: IXUS 870 IS / SD 880 IS, version 1.01a
+========================================================================
+
+DAT_ff92ec0c — ring buf struct (audio case 4)       ROM 0xFF92EC0C = 0x00008968  (RAM)
+DAT_ff93050c — ring buf struct (video/main)         ROM 0xFF93050C = 0x00008968  (RAM)
+DAT_ffa09a28 — sound rec state struct               ROM 0xFFA09A28 = 0x0000BDD8  (RAM)
+DAT_ffa09a2c — sample size multiplier               ROM 0xFFA09A2C = 0x00002B11  (RAM)
+DAT_ff846854 — AudioTsk state                       ROM 0xFF846854 = 0x000023C0  (RAM)
+DAT_ff846850 — AudioIC init param                   ROM 0xFF846850 = 0x00002710  (RAM)
+DAT_ff846858 — AudioTsk config 1                    ROM 0xFF846858 = 0x000006EC
+DAT_ff84685c — AudioTsk config 2                    ROM 0xFF84685C = 0x00001408  (RAM)
+DAT_ff93856c — SoundRecord state                    ROM 0xFF93856C = 0x000095AC  (RAM)
+DAT_ff939150 — SoundPlay state                      ROM 0xFF939150 = 0x00009614  (RAM)
+DAT_ff93a2b4 — WavWrite state                       ROM 0xFF93A2B4 = 0x000096A4  (RAM)
+DAT_ff93a2b8 — WavWrite buffer index                ROM 0xFF93A2B8 = 0x000096E0  (RAM)
+DAT_ff85d02c — movie_record_task state              ROM 0xFF85D02C = 0x000051A8  (RAM)
+DAT_ff85d028 — movie codec config                   ROM 0xFF85D028 = 0x0001ABB0  (RAM)
+DAT_ff85d6a4 — audio buf base (msg 4)               ROM 0xFF85D6A4 = 0x00005260  (RAM)
+DAT_ff84c2a0 — AudioIC hw state                     ROM 0xFF84C2A0 = 0x0000276C  (RAM)
+
+
+========================================================================
+Ring Buffer Struct Field Analysis
+========================================================================
+
+Audio ring buf struct (DAT_ff92ec0c) = 0x00008968
+Video ring buf struct (DAT_ff93050c) = 0x00008968
+>>> SAME STRUCT — audio and video share the ring buffer!
+
+Audio data offset within struct: +0x170 (108 bytes of PCM per frame)
+Audio metadata offset: +0x108 (8 bytes)
+If struct at 0x00008968:
+  Audio metadata addr: 0x00008A70
+  Audio data addr:     0x00008AD8
+
+
+========================================================================
+Msg 4 Audio Buffer Analysis
+========================================================================
+
+DAT_ff85d6a4 (audio buf base ptr) = 0x00005260
+  iVar9 = *DAT_ff85d6a4 (value at RAM 0x00005260, read at runtime)
+  Audio DMA buffer at: iVar9 + 0x219040
+  Audio ring data at:  iVar9 + 0x100040
+  Audio ring header:   iVar9 + 0x7C0
+  Audio index data:    iVar9 + 0x40
+
+
+========================================================================
+Audio String References in ROM
+========================================================================
+
+0xFF84683C: "AudioIC_WM1400.c" (AudioIC module)
+0xFF938570: "SoundRecorder.c" (SoundRecorder module)
+0xFF939154: "SoundPlayer.c" (SoundPlayer module)
+0xFF93A2BC: "WavWriter.c" (WavWriter module)
+0xFFA09A30: "
+SoundDataSize" (Sound data size debug)
+0xFFA09A40: "RECORDSOUNDDATA" (Record sound data resource)
