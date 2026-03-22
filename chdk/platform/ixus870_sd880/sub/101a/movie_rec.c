@@ -126,6 +126,36 @@ static int __attribute__((used,noinline)) spy_skip_error_path(void)
     return (hdr[0] == 0x52455753) ? 1 : 0;
 }
 
+// Skip posting video write messages to task_MovWrite when webcam is active.
+// Instead, manually update the ring buffer consumed pointer so the encoder
+// doesn't run out of free slots. This prevents case 2 messages from being
+// posted, avoiding write failures (fd=-1) and error flag cascade that would
+// drain audio messages. Audio cases (4/5/6) still run via task_MovWrite
+// because +0x80=1.
+//
+// Ring buffer struct at 0x8968:
+//   +0x18 = consumed pointer (updated by case 2 or by us)
+//   +0xC4 = ring buffer base address (wrap target)
+//   +0xC8 = ring buffer end address (wrap boundary)
+static void __attribute__((used,noinline)) spy_skip_movwrite(unsigned char *ptr, unsigned int size)
+{
+    volatile unsigned int *hdr = (volatile unsigned int *)0x000FF000;
+    if (hdr[0] != 0x52455753) {
+        // Normal recording — call the real function
+        void (*real_fn)(unsigned char *, unsigned int) =
+            (void (*)(unsigned char *, unsigned int))0xFF9300B4;
+        real_fn(ptr, size);
+    } else {
+        // Webcam active: update consumed pointer manually (replicates case 2 else branch)
+        volatile unsigned int *ring = (volatile unsigned int *)0x8968;
+        unsigned int new_consumed = (unsigned int)ptr + size;
+        if (new_consumed == ring[0xC8/4]) {   // wrap check
+            new_consumed = ring[0xC4/4];       // wrap to base
+        }
+        ring[0x18/4] = new_consumed;           // consumed pointer
+    }
+}
+
 // TakeSemaphore passthrough — calls firmware sub_FF8274B4 via function pointer.
 // sub_FF8274B4 has no linker stub, so BL from inline asm won't resolve (confirmed:
 // direct BL crashes camera). The C function pointer indirection is required.
@@ -166,11 +196,6 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
     if (hdr[0] == 0x52455753) {
         spy_cache_invalidate(ptr, size);
 
-        // Debug frames disabled: each debug frame causes the bridge to miss
-        // one H.264 frame (debug takes priority in PTP response), producing
-        // a decoder artifact. NAL type info is available from the bridge's
-        // own AVCC parsing.
-
         // Prevent SD card writes: clear task_MovWrite's is_open flag.
         // 0x89E8 = ring buffer struct (0x8968) + 0x80.
         // task_MovWrite checks this before every file write; when 0,
@@ -178,10 +203,6 @@ static void __attribute__((used,noinline)) spy_ring_write(unsigned char *ptr, un
         *(volatile unsigned int *)0x89E8 = 0;
 
         // Clear drain mode so task_MovWrite processes frame messages normally.
-        // spy_suppress_mov set +0x88=1 during init to drain the file-creation
-        // message.  Now that frames are flowing, clear it so case 2 (write)
-        // messages reach the consumed-pointer update path (writes still skip
-        // because +0x80=0 above).
         *(volatile unsigned int *)0x89F0 = 0;
 
         // Determine actual H.264 frame size from AVCC length prefix.
